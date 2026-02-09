@@ -7,14 +7,20 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 
 public class ServerSession implements Runnable {
 
     private static final Logger logger = LoggerFactory.getLogger(ServerSession.class);
 
+    // RFC 4253: The version string MUST begin with "SSH-2.0-"
+    private static final String SERVER_VERSION = "SSH-2.0-ArimaSSH_1.0";
+
     private final Socket clientSocket;
     private InputStream inputStream;
     private OutputStream outputStream;
+
+    private String clientVersion;
 
     public ServerSession(Socket clientSocket) {
         this.clientSocket = clientSocket;
@@ -30,25 +36,48 @@ public class ServerSession implements Runnable {
 
             logger.info("Session started for {}", clientSocket.getRemoteSocketAddress());
 
-            // For now, we just echo back whatever they type (Echo Server)
-            // Later, this will be: while (packet = readPacket()) { handle(packet); }
-            int data;
-            while ((data = inputStream.read()) != -1) {
+            //send version string immediately upon connection
+            outputStream.write((SERVER_VERSION + "\r\n").getBytes(StandardCharsets.UTF_8));
+            outputStream.flush();
+            logger.debug("Sent version: {}", SERVER_VERSION);
 
-                if (data == 'q') {
-                    logger.info("Client requested disconnect.");
-                    break;
-                }
-
-                outputStream.write(data);
-                outputStream.flush();
+            //read client's version string
+            this.clientVersion = readLine(inputStream);
+            
+            if (!clientVersion.startsWith("SSH-2.0-")) {
+                logger.error("Unsupported protocol version: {}", clientVersion);
+                close();
+                return;
             }
+            
+            logger.info("Client Identification: {}", clientVersion);
+
+            try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
 
         } catch (IOException e) {
             logger.error("Session error: {}", e.getMessage());
         } finally {
             close();
         }
+    }
+
+    /**
+     * Reads a line byte-by-byte to avoid over-reading the stream.
+     * Stops at \n. Ignores \r.
+     */
+    private String readLine(InputStream in) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        int b;
+        // Limit to 255 bytes to prevent memory attacks
+        while (sb.length() < 255 && (b = in.read()) != -1) {
+            if (b == '\n') {
+                return sb.toString(); 
+            }
+            if (b != '\r') { // specific SSH requirement: ignore CR, keep only other bytes
+                sb.append((char) b);
+            }
+        }
+        throw new IOException("Stream ended or line too long before version received");
     }
 
     private void close() {
