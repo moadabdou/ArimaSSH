@@ -49,10 +49,6 @@ public class SshServer
         try (clientSocket) {
 
             clientSocket.setSoTimeout(60000); // Set a timeout for client inactivity (30 seconds)
-
-            clientSocket.getOutputStream().write("Welcome to ArimaSSH Server!\n".getBytes());
-            clientSocket.getOutputStream().flush();
-
             ServerSession session = new ServerSession(clientSocket);
             session.run();
 
