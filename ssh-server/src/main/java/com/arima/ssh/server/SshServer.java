@@ -48,17 +48,15 @@ public class SshServer
     private void handleClient(Socket clientSocket) {
         try (clientSocket) {
 
+            clientSocket.setSoTimeout(60000); // Set a timeout for client inactivity (30 seconds)
 
             clientSocket.getOutputStream().write("Welcome to ArimaSSH Server!\n".getBytes());
             clientSocket.getOutputStream().flush();
 
-            logger.info("Sent welcome message to " + clientSocket.getInetAddress());
+            ServerSession session = new ServerSession(clientSocket);
+            session.run();
 
-            Thread.sleep(5000); // Simulate some work with the client
-
-            logger.info("Closing connection with " + clientSocket.getInetAddress());
-
-        }catch(Exception e){
+        }catch(IOException e){
 
             logger.error("Error handling client connection: ", e);
 
