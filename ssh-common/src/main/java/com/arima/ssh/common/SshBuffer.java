@@ -21,9 +21,67 @@ public class SshBuffer {
         this.data = new byte[256]; // Start small, grow as needed
     }
 
+    //--- HELPER METHODS ---
+
+    public void reset() {
+        rpos = 0;
+        wpos = 0;
+    }
+
+    public int available() {
+        return wpos - rpos;
+    }
+
+    // Get current read position
+    public int rpos() {
+        return rpos;
+    }
+
+    // Move read position safely
+    public void rpos(int rpos) {
+        if (rpos < 0 || rpos > wpos) {
+            throw new SshBufferException("Invalid read position: " + rpos + " (must be 0.." + wpos + ")");
+        }
+        this.rpos = rpos;
+    }
+
+    // Get current write position
+    public int wpos() {
+        return wpos;
+    }
+
+    // Move write position safely (expanding buffer if needed)
+    public void wpos(int wpos) {
+        if (wpos < 0) {
+            throw new SshBufferException("Invalid write position: " + wpos);
+        }
+        // Expand if extending beyond current capacity
+        if (wpos > data.length) {
+            ensureCapacity(wpos - this.wpos);
+        }
+        // If we moved wpos back, we should probably ensure rpos isn't beyond it
+        if (wpos < rpos) {
+            rpos = wpos;
+        }
+        this.wpos = wpos;
+    }
+
+    public void compact() {
+        if (rpos > 0) {
+            int len = available();
+            System.arraycopy(data, rpos, data, 0, len);
+            wpos = len;
+            rpos = 0;
+        }
+    }
+
+
     // --- READING METHODS ---
 
     public byte readByte() {
+        if (available() < 1) {
+            throw new SshBufferUnderflowException("Underflow: cannot read byte");
+        }
         return data[rpos++];
     }
 
@@ -32,6 +90,9 @@ public class SshBuffer {
     }
 
     public long readUInt32() {
+        if (available() < 4) {
+            throw new SshBufferUnderflowException("Underflow: cannot read uint32");
+        }
         int res = 0;
         res |= (readByte() & 0xFF) << 24;
         res |= (readByte() & 0xFF) << 16;
@@ -43,6 +104,12 @@ public class SshBuffer {
 
     public String readString() {
         int length = (int) readUInt32(); // First 4 bytes tell us the length
+        if (length < 0) {
+             throw new SshBufferException("Invalid string length: " + length);
+        }
+        if (available() < length) {
+            throw new SshBufferUnderflowException("Underflow: cannot read string of length " + length);
+        }
         String s = new String(data, rpos, length, StandardCharsets.UTF_8);
         rpos += length;
         return s;
@@ -51,6 +118,12 @@ public class SshBuffer {
     // Used for Crypto Keys (BigInteger)
     public BigInteger readMpint() {
         int length = (int) readUInt32();
+        if (length < 0) {
+             throw new SshBufferException("Invalid mpint length: " + length);
+        }
+        if (available() < length) {
+             throw new SshBufferUnderflowException("Underflow: cannot read mpint of length " + length);
+        }
         byte[] bytes = new byte[length];
         System.arraycopy(data, rpos, bytes, 0, length);
         rpos += length;
@@ -58,6 +131,12 @@ public class SshBuffer {
     }
 
     public byte[] readBytes(int length) {
+        if (length < 0) {
+             throw new SshBufferException("Invalid byte array length: " + length);
+        }
+        if (available() < length) {
+            throw new SshBufferUnderflowException("Underflow: cannot read " + length + " bytes");
+        }
         byte[] b = new byte[length];
         System.arraycopy(data, rpos, b, 0, length);
         rpos += length;
@@ -92,6 +171,9 @@ public class SshBuffer {
     }
 
     public void writeString(String s) {
+        if (s == null) {
+            throw new SshBufferException("Cannot write null string");
+        }
         byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
         writeUInt32(bytes.length);
         ensureCapacity(bytes.length);
