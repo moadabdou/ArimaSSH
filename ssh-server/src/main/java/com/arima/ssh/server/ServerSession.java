@@ -1,4 +1,6 @@
+
 package com.arima.ssh.server;
+
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +10,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+
+import java.security.SecureRandom;
+import com.arima.ssh.common.*;
 
 public class ServerSession implements Runnable {
 
@@ -22,24 +27,42 @@ public class ServerSession implements Runnable {
 
     private String clientVersion;
 
+    private String kexAlgo;
+    private String hostKeyAlgo;
+    private String cipherC2S;
+    private String cipherS2C;
+    private String macC2S;
+    private String macS2C;
+    private String compC2S;
+    private String compS2C;
+
+
+    private byte[] serverKexInitPayload; 
+    private byte[] clientKexInitPayload;
+
+
     public ServerSession(Socket clientSocket) {
         this.clientSocket = clientSocket;
     }
 
     @Override
     public void run() {
+
+        logger.info("Session started for {}", clientSocket.getRemoteSocketAddress());
         
         try {
-            
+
             this.inputStream = clientSocket.getInputStream();
             this.outputStream = clientSocket.getOutputStream();
 
-            logger.info("Session started for {}", clientSocket.getRemoteSocketAddress());
 
             //send version string immediately upon connection
             outputStream.write((SERVER_VERSION + "\r\n").getBytes(StandardCharsets.UTF_8));
             outputStream.flush();
             logger.debug("Sent version: {}", SERVER_VERSION);
+
+
+            // --------  TEXT PROTOCOL PHASE --------
 
             //read client's version string
             this.clientVersion = readLine(inputStream);
@@ -51,6 +74,88 @@ public class ServerSession implements Runnable {
             }
             
             logger.info("Client Identification: {}", clientVersion);
+
+
+            // --------  BINARY PROTOCOL PHASE --------
+
+
+            PacketReader packetReader = new PacketReader(inputStream);
+
+            // send our KEXINIT
+            sendKexInit();
+
+            logger.info("Sent KEXINIT to client, waiting for client's KEXINIT...");
+
+            // read client's KEXINIT
+
+            SshBuffer clientKexInitBuffer = packetReader.readPacket();
+
+            logger.info("Received client's KEXINIT packet, length: {}", clientKexInitBuffer.wpos());
+
+            this.clientKexInitPayload = clientKexInitBuffer.getCompactData();
+
+            // For demonstration, we just log the client's KEXINIT and end the session.
+
+            byte kexInitType = clientKexInitBuffer.readByte();
+            if (kexInitType != SshConstants.SSH_MSG_KEXINIT) {
+                logger.error("Expected SSH_MSG_KEXINIT, but got message type: {}", kexInitType);
+                close();
+                return;
+            }
+
+            clientKexInitBuffer.readBytes(16); // Skip the 16 random bytes
+
+            String clientKexAlgos = clientKexInitBuffer.readString();
+            String clientHostKeyAlgos = clientKexInitBuffer.readString();
+            String clientCipherAlgoC2S = clientKexInitBuffer.readString();
+            String clientCipherAlgoS2C = clientKexInitBuffer.readString();
+            String clientMacAlgoC2S = clientKexInitBuffer.readString();
+            String clientMacAlgoS2C = clientKexInitBuffer.readString();
+            String clientCompressionAlgoC2S = clientKexInitBuffer.readString();
+            String clientCompressionAlgoS2C = clientKexInitBuffer.readString();
+            String clientLangC2S = clientKexInitBuffer.readString();
+            String clientLangS2C = clientKexInitBuffer.readString();
+            boolean clientFirstKexPacketFollows = clientKexInitBuffer.readByte() != 0;
+            long clientReserved = clientKexInitBuffer.readUInt32();
+
+            logger.info("Received client's KEXINIT:");
+            logger.info("  Kex Algos: {}", clientKexAlgos);
+            logger.info("  Host Key Algos: {}", clientHostKeyAlgos);
+            logger.info("  Cipher Algos C->S: {}", clientCipherAlgoC2S);
+            logger.info("  Cipher Algos S->C: {}", clientCipherAlgoS2C);
+            logger.info("  MAC Algos C->S: {}", clientMacAlgoC2S);
+            logger.info("  MAC Algos S->C: {}", clientMacAlgoS2C);
+            logger.info("  Compression Algos C->S: {}", clientCompressionAlgoC2S);
+            logger.info("  Compression Algos S->C: {}", clientCompressionAlgoS2C);
+            logger.info("  Lang C->S: {}", clientLangC2S);
+            logger.info("  Lang S->C: {}", clientLangS2C);  
+            logger.info("  First KEX Packet Follows: {}", clientFirstKexPacketFollows);
+            logger.info("  Reserved: {}", clientReserved);
+
+
+            SecurityUtils securityUtils = new SecurityUtils();
+
+            this.kexAlgo = securityUtils.negotiate(clientKexAlgos, SshConstants.PROPOSAL_KEX);
+            this.hostKeyAlgo = securityUtils.negotiate(clientHostKeyAlgos, SshConstants.PROPOSAL_HOST_KEY);
+            this.cipherC2S = securityUtils.negotiate(clientCipherAlgoC2S, SshConstants.PROPOSAL_CIPHER);
+            this.cipherS2C = securityUtils.negotiate(clientCipherAlgoS2C, SshConstants.PROPOSAL_CIPHER);
+            this.macC2S = securityUtils.negotiate(clientMacAlgoC2S, SshConstants.PROPOSAL_MAC);
+            this.macS2C = securityUtils.negotiate(clientMacAlgoS2C, SshConstants.PROPOSAL_MAC);
+            this.compC2S = securityUtils.negotiate(clientCompressionAlgoC2S, SshConstants.PROPOSAL_COMPRESSION);
+            this.compS2C = securityUtils.negotiate(clientCompressionAlgoS2C, SshConstants.PROPOSAL_COMPRESSION);
+
+            if (kexAlgo == null || hostKeyAlgo == null || cipherC2S == null || cipherS2C == null) {
+                logger.error("Negotiation failed!");
+                logger.error("Kex: {}, HostKey: {}, Cipher: {}", kexAlgo, hostKeyAlgo, cipherC2S);
+                close();
+                return;
+            }
+
+            logger.info("Negotiation Complete:");
+            logger.info("  Kex: {}", kexAlgo);
+            logger.info("  Host Key: {}", hostKeyAlgo);
+            logger.info("  Cipher: {}", cipherC2S);
+
 
             try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
 
@@ -79,6 +184,40 @@ public class ServerSession implements Runnable {
         }
         throw new IOException("Stream ended or line too long before version received");
     }
+
+    // send SSH_MSG_KEXINIT 
+
+    public void sendKexInit() throws IOException {
+
+        SshBuffer payload = new SshBuffer();
+
+        byte[] randomBytes = new byte[16];
+        new SecureRandom().nextBytes(randomBytes);
+
+        payload.writeByte(SshConstants.SSH_MSG_KEXINIT);
+        payload.writeBytes(randomBytes, 0, randomBytes.length);
+        payload.writeString(SshConstants.PROPOSAL_KEX);
+        payload.writeString(SshConstants.PROPOSAL_HOST_KEY);
+        payload.writeString(SshConstants.PROPOSAL_CIPHER);
+        payload.writeString(SshConstants.PROPOSAL_CIPHER);
+        payload.writeString(SshConstants.PROPOSAL_MAC);
+        payload.writeString(SshConstants.PROPOSAL_MAC);
+        payload.writeString(SshConstants.PROPOSAL_COMPRESSION);
+        payload.writeString(SshConstants.PROPOSAL_COMPRESSION);
+        payload.writeString(SshConstants.PROPOSAL_LANG); 
+        payload.writeString(SshConstants.PROPOSAL_LANG); 
+        payload.writeByte((byte) 0); // first_kex_packet_follows = false
+        payload.writeUInt32(0); // reserved
+
+        this.serverKexInitPayload = payload.getCompactData();
+
+        PacketWriter packet = new PacketWriter(payload);
+
+        outputStream.write(packet.toByteArray());
+        outputStream.flush();
+
+    }
+
 
     private void close() {
         try {

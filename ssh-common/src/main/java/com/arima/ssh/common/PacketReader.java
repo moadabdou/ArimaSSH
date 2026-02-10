@@ -35,8 +35,8 @@ public class PacketReader {
         int packetLength = in.readInt();
         this.lastPacketLength = packetLength;
 
-         int paddingLength = in.readByte() & 0xFF; // Convert to unsigned
-         this.lastPaddingLength = paddingLength;
+        int paddingLength = in.readByte() & 0xFF; // Convert to unsigned
+        this.lastPaddingLength = paddingLength;
         
         if (packetLength > 35000 || packetLength < 1) {
             throw new SshBufferException("Packet length out of bounds: " + packetLength);
@@ -50,6 +50,10 @@ public class PacketReader {
 
         byte[] payload = new byte[payloadLength];
         in.readFully(payload);
+
+        // Consume the padding and ignore it
+        byte[] padding = new byte[paddingLength];
+        in.readFully(padding);
 
         return new SshBuffer(payload);
 
