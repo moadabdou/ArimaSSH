@@ -193,6 +193,12 @@ public class SshBuffer {
         wpos += bytes.length;
     }
 
+    public void writeMpint(BigInteger value) {
+        byte[] bytes = value.toByteArray();
+        writeUInt32(bytes.length);
+        writeBytes(bytes, 0, bytes.length);
+    }
+
     // Get the final raw bytes to send over network
     public byte[] getCompactData() {
         return Arrays.copyOf(data, wpos);
