@@ -27,6 +27,15 @@ public class ServerSession implements Runnable {
 
     private String clientVersion;
 
+    private String kexAlgo;
+    private String hostKeyAlgo;
+    private String cipherC2S;
+    private String cipherS2C;
+    private String macC2S;
+    private String macS2C;
+    private String compC2S;
+    private String compS2C;
+
 
     private byte[] serverKexInitPayload; 
     private byte[] clientKexInitPayload;
@@ -124,25 +133,28 @@ public class ServerSession implements Runnable {
             logger.info("  Reserved: {}", clientReserved);
 
 
-            // simple negotiation logic (for demonstration, we just check if the client's proposals contain our single supported option)
+            SecurityUtils securityUtils = new SecurityUtils();
 
-            if(!clientKexAlgos.contains(SshConstants.PROPOSAL_KEX) || 
-               !clientHostKeyAlgos.contains(SshConstants.PROPOSAL_HOST_KEY) ||
-                !clientCipherAlgoC2S.contains(SshConstants.PROPOSAL_CIPHER) ||
-                !clientCipherAlgoS2C.contains(SshConstants.PROPOSAL_CIPHER) ||
-                !clientMacAlgoC2S.contains(SshConstants.PROPOSAL_MAC) ||
-                !clientMacAlgoS2C.contains(SshConstants.PROPOSAL_MAC) ||
-                !clientCompressionAlgoC2S.contains(SshConstants.PROPOSAL_COMPRESSION) ||
-                !clientCompressionAlgoS2C.contains(SshConstants.PROPOSAL_COMPRESSION) ||
-                !clientLangC2S.contains(SshConstants.PROPOSAL_LANG) ||
-                !clientLangS2C.contains(SshConstants.PROPOSAL_LANG)
-            ) {
-                logger.error("Client does not support required kex and hostKey algorithms. Closing session.");
+            this.kexAlgo = securityUtils.negotiate(clientKexAlgos, SshConstants.PROPOSAL_KEX);
+            this.hostKeyAlgo = securityUtils.negotiate(clientHostKeyAlgos, SshConstants.PROPOSAL_HOST_KEY);
+            this.cipherC2S = securityUtils.negotiate(clientCipherAlgoC2S, SshConstants.PROPOSAL_CIPHER);
+            this.cipherS2C = securityUtils.negotiate(clientCipherAlgoS2C, SshConstants.PROPOSAL_CIPHER);
+            this.macC2S = securityUtils.negotiate(clientMacAlgoC2S, SshConstants.PROPOSAL_MAC);
+            this.macS2C = securityUtils.negotiate(clientMacAlgoS2C, SshConstants.PROPOSAL_MAC);
+            this.compC2S = securityUtils.negotiate(clientCompressionAlgoC2S, SshConstants.PROPOSAL_COMPRESSION);
+            this.compS2C = securityUtils.negotiate(clientCompressionAlgoS2C, SshConstants.PROPOSAL_COMPRESSION);
+
+            if (kexAlgo == null || hostKeyAlgo == null || cipherC2S == null || cipherS2C == null) {
+                logger.error("Negotiation failed!");
+                logger.error("Kex: {}, HostKey: {}, Cipher: {}", kexAlgo, hostKeyAlgo, cipherC2S);
                 close();
                 return;
             }
 
-            logger.info("Client supports required algorithms. Proceeding with key exchange.");
+            logger.info("Negotiation Complete:");
+            logger.info("  Kex: {}", kexAlgo);
+            logger.info("  Host Key: {}", hostKeyAlgo);
+            logger.info("  Cipher: {}", cipherC2S);
 
 
             try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
