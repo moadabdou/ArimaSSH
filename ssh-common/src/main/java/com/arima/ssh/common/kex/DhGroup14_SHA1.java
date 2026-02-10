@@ -3,7 +3,7 @@ package com.arima.ssh.common.kex;
 import java.math.BigInteger;
 import java.security.SecureRandom;
 
-public class DhGroup14 implements KeyExchange {
+public class DhGroup14_SHA1 implements KeyExchange {
 
     // RFC 3526: 2048-bit MODP Group
     private static final BigInteger P = new BigInteger(

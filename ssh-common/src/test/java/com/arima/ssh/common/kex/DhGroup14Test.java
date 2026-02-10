@@ -9,12 +9,12 @@ class DhGroup14Test {
     @Test
     void testKeyExchange() {
         // 1. Setup Alice (Client)
-        DhGroup14 alice = new DhGroup14();
+        DhGroup14_SHA1 alice = new DhGroup14_SHA1();
         alice.init();
         byte[] alicePublic = alice.getPublicKey();
 
         // 2. Setup Bob (Server)
-        DhGroup14 bob = new DhGroup14();
+        DhGroup14_SHA1 bob = new DhGroup14_SHA1();
         bob.init();
         byte[] bobPublic = bob.getPublicKey();
 

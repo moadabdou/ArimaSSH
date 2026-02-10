@@ -54,8 +54,7 @@ public class HostKeyProvider {
 
         SshBuffer buffer = new SshBuffer();
         buffer.writeString(algoName);
-        buffer.writeUInt32(rawSignature.length);
-        buffer.writeBytes(rawSignature, 0, rawSignature.length);
+        buffer.writeByteString(rawSignature, 0, rawSignature.length);
 
         return buffer.getCompactData();
     }    

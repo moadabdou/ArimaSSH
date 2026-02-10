@@ -193,6 +193,13 @@ public class SshBuffer {
         wpos += bytes.length;
     }
 
+     // equivalent of writing uint32 followed by that many bytes. 
+    public void writeByteString(byte[] bytes, int offset, int length) {
+        writeUInt32(length);
+        writeBytes(bytes, offset, length);
+    }
+
+
     public void writeMpint(BigInteger value) {
         byte[] bytes = value.toByteArray();
         writeUInt32(bytes.length);

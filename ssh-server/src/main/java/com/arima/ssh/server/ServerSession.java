@@ -8,11 +8,15 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.math.BigInteger;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 import java.security.SecureRandom;
 import com.arima.ssh.common.*;
+import com.arima.ssh.common.kex.*;
+
+import java.security.MessageDigest;
 
 public class ServerSession implements Runnable {
 
@@ -144,9 +148,24 @@ public class ServerSession implements Runnable {
             this.compC2S = securityUtils.negotiate(clientCompressionAlgoC2S, SshConstants.PROPOSAL_COMPRESSION);
             this.compS2C = securityUtils.negotiate(clientCompressionAlgoS2C, SshConstants.PROPOSAL_COMPRESSION);
 
-            if (kexAlgo == null || hostKeyAlgo == null || cipherC2S == null || cipherS2C == null) {
+            if (kexAlgo == null ||
+                hostKeyAlgo == null ||
+                cipherC2S == null || 
+                cipherS2C == null ||
+                macC2S == null ||
+                macS2C == null ||
+                compC2S == null ||
+                compS2C == null) 
+            {
                 logger.error("Negotiation failed!");
-                logger.error("Kex: {}, HostKey: {}, Cipher: {}", kexAlgo, hostKeyAlgo, cipherC2S);
+                logger.error("Agreed Kex Algo: {}", kexAlgo);
+                logger.error("Agreed Host Key Algo: {}", hostKeyAlgo);
+                logger.error("Agreed Cipher C->S: {}", cipherC2S);
+                logger.error("Agreed Cipher S->C: {}", cipherS2C); 
+                logger.error("Agreed MAC C->S: {}", macC2S);
+                logger.error("Agreed MAC S->C: {}", macS2C);
+                logger.error("Agreed Compression C->S: {}", compC2S);
+                logger.error("Agreed Compression S->C: {}", compS2C);
                 close();
                 return;
             }
@@ -154,7 +173,92 @@ public class ServerSession implements Runnable {
             logger.info("Negotiation Complete:");
             logger.info("  Kex: {}", kexAlgo);
             logger.info("  Host Key: {}", hostKeyAlgo);
-            logger.info("  Cipher: {}", cipherC2S);
+            logger.info("  CipherC2S: {}", cipherC2S);
+            logger.info("  CipherS2C: {}", cipherS2C);
+            logger.info("  MAC_C2S: {}", macC2S);
+            logger.info("  MAC_S2C: {}", macS2C);
+            logger.info("  Compression_C2S: {}", compC2S);
+            logger.info("  Compression_S2C: {}", compS2C);
+
+
+            // --------  KEY EXCHANGE PHASE --------
+
+
+            // init the KEX algorithm with the agreed parameters
+
+            KeyExchange kex = KEXAlgoFromName(kexAlgo);
+            kex.init();
+
+            HostKeyProvider hostKeyProvider = new HostKeyProvider();
+
+            try {
+                hostKeyProvider.init();
+            } catch (Exception e) {
+                logger.error("Host key initialization failed: {}", e.getMessage());
+                close();
+                return;
+            } 
+
+            // read client's KEXDH_INIT message
+
+            SshBuffer kexDhInitBuffer = packetReader.readPacket();
+            byte kexDhInitType = kexDhInitBuffer.readByte();
+            if (kexDhInitType != SshConstants.SSH_MSG_KEXDH_INIT) {
+                logger.error("Expected SSH_MSG_KEXDH_INIT, but got message type: {}", kexDhInitType);
+                close();
+                return;
+            }
+
+            // get client's public key e
+            BigInteger clientE_BigInteger = kexDhInitBuffer.readMpint();
+            byte[] clientE = clientE_BigInteger.toByteArray();
+            
+            logger.info("Received client's KEXDH_INIT, e length: {}", clientE.length);
+
+            // get server's public key f = g^x mod p
+            byte[] serverF = kex.getPublicKey();
+            
+
+            // caclulate shared secret K = e^x mod p
+            BigInteger sharedSecretK = kex.computeSharedSecret(clientE);
+
+
+            // get host public key blob
+            byte[] hostKeyBlob = hostKeyProvider.getPublicKeyBlob();
+
+
+            // calculate exchange hash H
+            byte[] exchangeHash = null;
+            try {
+                exchangeHash = calculateExchangeHash(kex.getHashAlgorithm() , hostKeyBlob, clientE, serverF, sharedSecretK);
+            } catch (Exception e) {
+                logger.error("Failed to calculate exchange hash: {}", e.getMessage());
+                close();
+                return;
+            }
+
+            // sign the exchange hash with the host private key to create the signature blob
+            byte[] signatureBlob = null;
+            try {
+                signatureBlob = hostKeyProvider.sign(exchangeHash, hostKeyAlgo);
+            } catch (Exception e) {
+                logger.error("Failed to sign exchange hash: {}", e.getMessage());
+                close();
+                return;
+            }
+
+            // send KEXDH_REPLY message containing host key blob, server public key f, and signature blob
+
+            PacketWriter kexDhReply = new PacketWriter();
+            kexDhReply.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
+            kexDhReply.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
+            kexDhReply.writeByteString(serverF, 0, serverF.length);
+            kexDhReply.writeByteString(signatureBlob, 0, signatureBlob.length);
+
+            outputStream.write(kexDhReply.toByteArray());
+            outputStream.flush();
+
+            logger.info("Sent KEXDH_REPLY to client, key exchange complete! Closing session.");
 
 
             try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
@@ -216,6 +320,43 @@ public class ServerSession implements Runnable {
         outputStream.write(packet.toByteArray());
         outputStream.flush();
 
+    }
+
+    /**
+     * calculate the exchange hash H for the KEXINIT messages, according to RFC 4253 section 8.
+     */
+
+    private byte[] calculateExchangeHash(String HashAlgo, byte[] k_s, byte[] e, byte[] f, BigInteger k ) throws Exception {
+
+        MessageDigest hash = MessageDigest.getInstance(HashAlgo);
+
+        SshBuffer buffer = new SshBuffer();
+
+        buffer.writeString(clientVersion);
+        buffer.writeString(SERVER_VERSION);
+        buffer.writeByteString(clientKexInitPayload, 0, clientKexInitPayload.length);
+        buffer.writeByteString(serverKexInitPayload, 0, serverKexInitPayload.length);
+        buffer.writeByteString(k_s, 0, k_s.length);
+        buffer.writeByteString(e, 0, e.length);
+        buffer.writeByteString(f, 0, f.length);
+        buffer.writeMpint(k);
+
+        byte[] exchangeHash = hash.digest(buffer.getCompactData());
+
+        return exchangeHash;
+    }
+
+
+    /**
+     * get the key exchange hash algorithm name from the KEX algorithm name
+     */
+
+    public KeyExchange KEXAlgoFromName(String kexAlgo) {
+        if (kexAlgo.startsWith("diffie-hellman-group14-sha1")) {
+            return new DhGroup14_SHA1();
+        } else {
+            throw new IllegalArgumentException("Unsupported KEX algorithm: " + kexAlgo);
+        }
     }
 
 

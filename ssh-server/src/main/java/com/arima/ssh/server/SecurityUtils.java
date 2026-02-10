@@ -17,7 +17,7 @@ public class SecurityUtils {
         for (String clientAlgo : clientAlgos) {
             for (String serverAlgo : serverAlgos) {
                 if (clientAlgo.trim().equals(serverAlgo.trim())) {
-                    return clientAlgo.trim(); // Found a match!
+                    return clientAlgo.trim(); 
                 }
             }
         }
