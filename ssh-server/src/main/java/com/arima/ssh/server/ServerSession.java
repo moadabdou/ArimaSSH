@@ -126,7 +126,17 @@ public class ServerSession implements Runnable {
 
             // simple negotiation logic (for demonstration, we just check if the client's proposals contain our single supported option)
 
-            if(!clientKexAlgos.contains(SshConstants.PROPOSAL_KEX) || !clientHostKeyAlgos.contains(SshConstants.PROPOSAL_HOST_KEY)) {
+            if(!clientKexAlgos.contains(SshConstants.PROPOSAL_KEX) || 
+               !clientHostKeyAlgos.contains(SshConstants.PROPOSAL_HOST_KEY) ||
+                !clientCipherAlgoC2S.contains(SshConstants.PROPOSAL_CIPHER) ||
+                !clientCipherAlgoS2C.contains(SshConstants.PROPOSAL_CIPHER) ||
+                !clientMacAlgoC2S.contains(SshConstants.PROPOSAL_MAC) ||
+                !clientMacAlgoS2C.contains(SshConstants.PROPOSAL_MAC) ||
+                !clientCompressionAlgoC2S.contains(SshConstants.PROPOSAL_COMPRESSION) ||
+                !clientCompressionAlgoS2C.contains(SshConstants.PROPOSAL_COMPRESSION) ||
+                !clientLangC2S.contains(SshConstants.PROPOSAL_LANG) ||
+                !clientLangS2C.contains(SshConstants.PROPOSAL_LANG)
+            ) {
                 logger.error("Client does not support required kex and hostKey algorithms. Closing session.");
                 close();
                 return;
