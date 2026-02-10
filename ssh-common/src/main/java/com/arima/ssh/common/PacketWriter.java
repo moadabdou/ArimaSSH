@@ -54,6 +54,11 @@ public class PacketWriter {
         buffer.writeString(s);
     }
     
+    public void writeByteString(byte[] bytes, int offset, int length) {
+        checkState();
+        buffer.writeByteString(bytes, offset, length);
+    }
+
     // Get the final raw bytes to send over network
     public byte[] toByteArray() {
         if (built) {
