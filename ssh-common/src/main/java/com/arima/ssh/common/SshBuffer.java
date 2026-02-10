@@ -157,6 +157,18 @@ public class SshBuffer {
         ensureCapacity(1);
         data[wpos++] = b;
     }
+
+    public void writeBytes(byte[] bytes, int offset, int length) {
+        if (bytes == null) {
+            throw new SshBufferException("Cannot write null byte array");
+        }
+        if (offset < 0 || length < 0 || offset + length > bytes.length) {
+            throw new SshBufferException("Invalid offset/length for byte array");
+        }
+        ensureCapacity(length);
+        System.arraycopy(bytes, offset, data, wpos, length);
+        wpos += length;
+    }
     
     public void writeBoolean(boolean v) {
         writeByte(v ? (byte) 1 : (byte) 0);

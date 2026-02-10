@@ -47,15 +47,16 @@ public class SshServer
 
     private void handleClient(Socket clientSocket) {
         try (clientSocket) {
-
-            clientSocket.setSoTimeout(60000); // Set a timeout for client inactivity (30 seconds)
             ServerSession session = new ServerSession(clientSocket);
+            logger.info("Starting session for {}", clientSocket.getRemoteSocketAddress());
             session.run();
 
         }catch(IOException e){
 
             logger.error("Error handling client connection: ", e);
 
+        } catch (Throwable t) {
+            logger.error("Unexpected error handling client connection: ", t);
         }
 
     }

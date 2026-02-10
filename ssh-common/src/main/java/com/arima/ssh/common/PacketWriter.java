@@ -20,6 +20,11 @@ public class PacketWriter {
         this.buffer.wpos(5);
     }
 
+    public PacketWriter(SshBuffer payload) {
+        this();
+        this.buffer.writeBytes(payload.getCompactData(), 0, payload.wpos());
+    }
+
     //--- WRITING METHODS ---
 
     private void checkState() {
@@ -32,6 +37,7 @@ public class PacketWriter {
         checkState();
         buffer.writeByte(b);
     }
+    
 
     public void writeBoolean(boolean b) {
         checkState();
