@@ -81,7 +81,7 @@ public class ServerSession implements Runnable {
 
             PacketReader packetReader = new PacketReader(inputStream);
 
-            // send our KEXINIT
+            // send KEXINIT
             sendKexInit();
 
             logger.info("Sent KEXINIT to client, waiting for client's KEXINIT...");
