@@ -44,6 +44,8 @@ public class ServerSession implements Runnable {
     private byte[] serverKexInitPayload; 
     private byte[] clientKexInitPayload;
 
+    private byte[] SessionId; // The session ID is the exchange hash of the first key exchange, and is used in subsequent key exchanges and authentication.
+
 
     public ServerSession(Socket clientSocket) {
         this.clientSocket = clientSocket;
@@ -236,6 +238,8 @@ public class ServerSession implements Runnable {
                 close();
                 return;
             }
+
+            this.SessionId = exchangeHash; // For the first key exchange, the session ID is the exchange hash
 
             // sign the exchange hash with the host private key to create the signature blob
             byte[] signatureBlob = null;
