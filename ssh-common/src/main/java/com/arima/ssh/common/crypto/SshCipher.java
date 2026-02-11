@@ -22,7 +22,8 @@ public class SshCipher {
         // Mode: Cipher.ENCRYPT_MODE or Cipher.DECRYPT_MODE
         this.cipher = Cipher.getInstance(transformation);
         
-        SecretKeySpec keySpec = new SecretKeySpec(key, "AES");
+        String algorithm = transformation.split("/")[0];
+        SecretKeySpec keySpec = new SecretKeySpec(key, algorithm);
         IvParameterSpec ivSpec = new IvParameterSpec(iv);
         
         cipher.init(mode, keySpec, ivSpec);
@@ -33,5 +34,9 @@ public class SshCipher {
      */
     public void transform(byte[] input, int inputOffset, int inputLen, byte[] output, int outputOffset) throws ShortBufferException {
         cipher.update(input, inputOffset, inputLen, output, outputOffset);
+    }
+
+    public int getBlockSize() {
+        return cipher.getBlockSize();
     }
 }

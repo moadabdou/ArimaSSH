@@ -2,11 +2,7 @@ package com.arima.ssh.common;
 
 import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
-
-import javax.crypto.ShortBufferException;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 class PacketReaderTest {
