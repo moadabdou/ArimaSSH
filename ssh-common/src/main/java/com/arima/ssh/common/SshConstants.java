@@ -44,6 +44,9 @@ public class SshConstants {
     public static final int SSH_DISCONNECT_ILLEGAL_USER_NAME = 15;
 
 
+    // Supported Authentication Methods
+
+    public static final String SUPPORTED_AUTH_METHODS = "publickey,password";
 
     // Supported Algorithms
     public static final String PROPOSAL_KEX = "diffie-hellman-group14-sha1";
