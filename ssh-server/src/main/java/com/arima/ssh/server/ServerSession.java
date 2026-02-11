@@ -490,7 +490,6 @@ public class ServerSession implements Runnable {
                     }else if ("password".equals(method)) {
 
                         
-
                         boolean hasOldPassword = packet.readBoolean();
                         String password = packet.readString();
 
@@ -538,7 +537,46 @@ public class ServerSession implements Runnable {
 
                         }
                             
-                    } else {
+                    }else if ("publickey".equals(method)) {
+
+                        logger.warn("KeyPublic auth attempt by user {}.", user);
+
+                        boolean hasSignature = packet.readBoolean();
+                        String keyAlgo = packet.readString();
+                        byte[] keyBlob = packet.readByteString();
+
+                        // check if its a query 
+                        if (!hasSignature) {
+                            logger.info("Public key query received for algo {}. Responding with allowed=true to indicate the server recognizes this key type.", keyAlgo);
+
+                            packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_PK_OK);
+                            packetWriter.writeString(keyAlgo);
+                            packetWriter.writeByteString(keyBlob, 0, keyBlob.length);
+
+
+                            try {
+                                packetWriter.writePacket();
+                            } catch (Exception e) {
+                                logger.error("Failed to send USERAUTH_PK_OK packet: {}", e.getMessage());
+                                close();
+                                return;
+                            }
+
+                        } else {
+                            logger.warn("Public key authentication with signature is not supported yet.");
+                            
+                            try {
+                                sendAuthFailure(packetWriter, true); // allow retry for other methods
+                            } catch (Exception e) {
+                                logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                                close();
+                                return;
+                            }
+                        }
+
+
+
+                    }else {
 
                         logger.warn("Unsupported method: {}", method);
                                 

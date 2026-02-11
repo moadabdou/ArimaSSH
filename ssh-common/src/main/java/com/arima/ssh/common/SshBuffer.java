@@ -143,6 +143,22 @@ public class SshBuffer {
         return b;
     }
 
+    public byte[] readByteString() {
+
+        int length = (int) readUInt32(); // First 4 bytes tell us the length
+        if (length < 0) {
+             throw new SshBufferException("Invalid string length: " + length);
+        }
+        if (available() < length) {
+            throw new SshBufferUnderflowException("Underflow: cannot read string of length " + length);
+        }
+        
+        byte[] b = new byte[length];
+        System.arraycopy(data, rpos, b, 0, length);
+        rpos += length;
+        return b;
+    }
+
     // --- WRITING METHODS ---
     
     public void ensureCapacity(int capacity) {
