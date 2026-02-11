@@ -4,6 +4,9 @@ package com.arima.ssh.server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.arima.ssh.server.auth.PasswordAuthenticator;
+import com.arima.ssh.server.auth.StaticPasswordAuthenticator;
+
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -22,6 +25,17 @@ public class SshServer
 
     private ExecutorService ConnectionPool = Executors.newVirtualThreadPerTaskExecutor();
 
+
+    private PasswordAuthenticator passwordAuthenticator;
+
+
+    public void setPasswordAuthenticator(PasswordAuthenticator passwordAuthenticator) {
+        this.passwordAuthenticator = passwordAuthenticator;
+    }
+
+    public PasswordAuthenticator getPasswordAuthenticator() {
+        return passwordAuthenticator;
+    }
 
     public void start(){
 
@@ -47,7 +61,7 @@ public class SshServer
 
     private void handleClient(Socket clientSocket) {
         try (clientSocket) {
-            ServerSession session = new ServerSession(clientSocket);
+            ServerSession session = new ServerSession(clientSocket, this);
             logger.info("Starting session for {}", clientSocket.getRemoteSocketAddress());
             session.run();
 
@@ -78,7 +92,13 @@ public class SshServer
     public static void main( String[] args )
     {
         
+        StaticPasswordAuthenticator authenticator = new StaticPasswordAuthenticator();
+        authenticator.addUser("moadabdou", "arima");
+
         SshServer sshServer = new SshServer();
+
+        sshServer.setPasswordAuthenticator(authenticator);
+
         sshServer.start();
 
         Runtime.getRuntime().addShutdownHook(new Thread(sshServer::stop));

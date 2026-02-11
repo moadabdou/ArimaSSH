@@ -1,4 +1,3 @@
-
 package com.arima.ssh.server;
 
 
@@ -22,6 +21,7 @@ import com.arima.ssh.common.crypto.SshCipher;
 import com.arima.ssh.common.crypto.SshMac;
 import com.arima.ssh.common.crypto.CipherFactory.CipherConstants;
 import com.arima.ssh.common.kex.*;
+import com.arima.ssh.server.auth.PasswordAuthenticator;
 
 import java.security.MessageDigest;
 
@@ -33,6 +33,8 @@ public class ServerSession implements Runnable {
     private static final String SERVER_VERSION = "SSH-2.0-ArimaSSH_1.0";
 
     private final Socket clientSocket;
+    private final SshServer server;
+
     private InputStream inputStream;
     private OutputStream outputStream;
 
@@ -60,8 +62,9 @@ public class ServerSession implements Runnable {
     private SshMac macServer; //S2C
 
 
-    public ServerSession(Socket clientSocket) {
+    public ServerSession(Socket clientSocket, SshServer server) {
         this.clientSocket = clientSocket;
+        this.server = server;
     }
 
     @Override
@@ -400,9 +403,9 @@ public class ServerSession implements Runnable {
             // ------- HANDLE SSH USER AUTHENTICATION AND CHANNEL REQUESTS --------
 
 
-            // client is expected to send a SSH_MSG_SERVICE_REQUEST (5) for "ssh-userauth" as the first encrypted packet
+            // client is expected to send a SSH_MSG_SERVICE_REQUEST with the service "ssh-userauth" to initiate the authentication phase.
 
-            logger.info("Waiting for client's SERVICE_REQUEST for ssh-userauth...");
+            logger.info("Waiting for client's SERVICE_REQUEST ...");
 
             SshBuffer serviceReqBuffer = null;
 
@@ -416,118 +419,148 @@ public class ServerSession implements Runnable {
 
             msgId = serviceReqBuffer.readByte();
 
-            if( msgId == SshConstants.SSH_MSG_SERVICE_REQUEST) { // SSH_MSG_SERVICE_REQUEST = 5
+   
+            if (msgId != SshConstants.SSH_MSG_SERVICE_REQUEST) {
+                logger.error("Expected SSH_MSG_SERVICE_REQUEST (5), got {}", msgId);
+                sendDisconnectAndClose(packetWriter, SshConstants.SSH_DISCONNECT_PROTOCOL_ERROR, "Expected SERVICE_REQUEST");
+                return;
+            }
 
-                String serviceName = serviceReqBuffer.readString();
 
-                if ( serviceName.equals("ssh-userauth") ){
+            String serviceName = serviceReqBuffer.readString();
+            if (!serviceName.equals("ssh-userauth")) {
+                logger.error("Unsupported service requested: {}", serviceName);
+                sendDisconnectAndClose(packetWriter, SshConstants.SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, serviceName);
+                return;
+            }
 
-                    logger.info("Received service request for ssh-userauth, sending SERVICE_ACCEPT...");
+           
+            logger.info("Received service request for ssh-userauth, sending SERVICE_ACCEPT...");
 
-                    packetWriter.writeByte(SshConstants.SSH_MSG_SERVICE_ACCEPT);
-                    packetWriter.writeString(serviceName);
-                    
-                    try {
-                        packetWriter.writePacket();
-                    } catch (Exception e) {
-                        logger.error("Failed to send SERVICE_ACCEPT packet: {}", e.getMessage());
-                        close();
-                        return;
-                    }
+            packetWriter.writeByte(SshConstants.SSH_MSG_SERVICE_ACCEPT);
+            packetWriter.writeString(serviceName);
+            
+            try {
+                packetWriter.writePacket();
+            } catch (Exception e) {
+                logger.error("Failed to send SERVICE_ACCEPT packet: {}", e.getMessage());
+                close();
+                return;
+            }
+        
+            // ----- handle user authentication requests -----
+            boolean authenticated = false;
+            String username = null;
 
-                
-                    // ----- Now ready to handle user authentication requests -----
+            while (!authenticated) {
 
-                    boolean authenticated = false;
-                    String username = null;
+                try {
+                    packet = packetReader.readPacket();
+                } catch (Exception e) {
+                    logger.error("Failed to read encrypted packet from client: {}", e.getMessage());
+                    close();
+                    return;
+                }
 
-                    while (!authenticated) {
+                msgId = packet.readByte();
+
+                if (msgId == SshConstants.SSH_MSG_USERAUTH_REQUEST) {
+                            
+       
+                    String user = packet.readString();
+                    String service = packet.readString();
+                    String method = packet.readString();
+
+                    logger.info("Auth Request: User={}, Service={}, Method={}", user, service, method);
+
+
+                    if ("none".equals(method)) {
+
+                        logger.info("Client requested 'none' auth. Sending supported methods.");
+                                
 
                         try {
-                            packet = packetReader.readPacket();
+                            sendAuthFailure(packetWriter, true);
                         } catch (Exception e) {
-                            logger.error("Failed to read encrypted packet from client: {}", e.getMessage());
+                            logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
                             close();
                             return;
                         }
-                        msgId = packet.readByte();
 
-                        if (msgId == SshConstants.SSH_MSG_USERAUTH_REQUEST) {
-                            
-       
-                            String user = packet.readString();
-                            String service = packet.readString();
-                            String method = packet.readString();
+                    }else if ("password".equals(method)) {
 
-                            logger.info("Auth Request: User={}, Service={}, Method={}", user, service, method);
+                        
+
+                        boolean hasOldPassword = packet.readBoolean();
+                        String password = packet.readString();
+
+                        logger.info("Password auth attempt for user {}. Has old password: {}", user, hasOldPassword);
 
 
-                            if ("none".equals(method)) {
+                        PasswordAuthenticator authenticator = server.getPasswordAuthenticator();
 
-                                logger.info("Client requested 'none' auth. Sending supported methods.");
-                                
+                        boolean success = false;
 
-                                packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_FAILURE);
-                                
-                                packetWriter.writeString("publickey,password"); 
-                            
-                                packetWriter.writeBoolean(false); 
+                        if(authenticator!= null){
+                            success = authenticator.authenticate(user, password, this);
+                        } else {
+                            logger.warn("No PasswordAuthenticator configured on server. Rejecting all password auth attempts.");
+                        }
 
-                                try {
-                                    packetWriter.writePacket();
-                                } catch (Exception e) {
-                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
-                                    close();
-                                    return;
-                                }
+                        if (success){
 
-                            }else {
+                            logger.info("User {} authenticated successfully with password!", user);
 
-                                logger.warn("Unsupported method: {}", method);
-                                
-                                packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_FAILURE);
-                                
-                                packetWriter.writeString("publickey,password"); 
-                            
-                                packetWriter.writeBoolean(false); 
-                                
-                                try {
-                                    packetWriter.writePacket();
-                                } catch (Exception e) {
-                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
-                                    close();
-                                    return;
-                                }
+                            packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_SUCCESS);
 
+                            try {
+                                packetWriter.writePacket();
+                            } catch (Exception e) {
+                                logger.error("Failed to send USERAUTH_SUCCESS packet: {}", e.getMessage());
+                                close();
+                                return;
                             }
 
-                        }else {
-                            // Ignore other packets (like debug/ignore) or disconnect
-                            logger.warn("Unexpected packet during auth: {}", msgId);
+                            authenticated = true;
+                            username = user; 
+
+                        }else{
+
+                            logger.warn("User {} failed to authenticate with password.", user);
+
+                            try {
+                                sendAuthFailure(packetWriter, true); // allow retry for password auth
+                            } catch (Exception e) {
+                                logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                                close();
+                                return;
+                            }
+
+                        }
+                            
+                    } else {
+
+                        logger.warn("Unsupported method: {}", method);
+                                
+                        try {
+                            sendAuthFailure(packetWriter, false); // don't allow retry for unsupported methods
+                        } catch (Exception e) {
+                            logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                            close();
+                            return;
                         }
 
                     }
-                    
-                    logger.info("User {} Authenticated!", username);
-                        
 
-                }else{
-
-                    logger.error("Unsupported service requested: {}", serviceName);
-
-                    sendDisconnectAndClose(packetWriter, SshConstants.SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, serviceName);
-
-                    return;
-
+                }else {
+                    // Ignore other packets (like debug/ignore) or disconnect
+                    logger.warn("Unexpected packet during auth: {}", msgId);
                 }
 
-            }else {
-
-                logger.error("Expected SSH_MSG_SERVICE_REQUEST (5), got {}", msgId);
-
             }
-
-            try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
+            
+            logger.info("User {} Authenticated!", username);
+                        
 
         } catch (IOException e) {
             logger.error("Session error: {}", e.getMessage());
@@ -593,6 +626,19 @@ public class ServerSession implements Runnable {
             return;
         }
 
+    }
+
+
+    /**
+     * send authentication failure with a list of supported methods 
+     * and a boolean indicating whether the client can try again (false if max attempts reached or method was not recognized)
+     */
+
+    private  void sendAuthFailure(PacketWriter writer, boolean canRetry) throws Exception{
+        writer.writeByte(SshConstants.SSH_MSG_USERAUTH_FAILURE);
+        writer.writeString(SshConstants.SUPPORTED_AUTH_METHODS);
+        writer.writeBoolean(canRetry);
+        writer.writePacket();
     }
 
     /**
