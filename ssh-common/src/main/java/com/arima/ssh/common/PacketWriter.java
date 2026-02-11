@@ -2,6 +2,10 @@ package com.arima.ssh.common;
 
 import java.security.SecureRandom;
 
+import javax.crypto.ShortBufferException;
+
+import com.arima.ssh.common.crypto.SshCipher;
+
 /**
  * This class will write packets according to the SSH spec. 
  * It will use SshBuffer internally to build the packet, 
@@ -13,6 +17,8 @@ public class PacketWriter {
     private final SecureRandom random;
     private boolean built = false;
 
+    private SshCipher cipher;
+
     public PacketWriter() {
         this.buffer = new SshBuffer();
         this.random = new SecureRandom();
@@ -23,6 +29,10 @@ public class PacketWriter {
     public PacketWriter(SshBuffer payload) {
         this();
         this.buffer.writeBytes(payload.getCompactData(), 0, payload.wpos());
+    }
+
+    public void setCipher(SshCipher cipher) {
+        this.cipher = cipher;
     }
 
     //--- WRITING METHODS ---
@@ -60,7 +70,7 @@ public class PacketWriter {
     }
 
     // Get the final raw bytes to send over network
-    public byte[] toByteArray() {
+    public byte[] toByteArray() throws ShortBufferException {
         if (built) {
              return buffer.getCompactData();
         }
@@ -104,6 +114,15 @@ public class PacketWriter {
         }
 
         built = true;
-        return buffer.getCompactData();
+
+        byte[] finalBuffer = buffer.getCompactData();
+
+        if (cipher != null) {
+            byte[] encryptedBuffer = new byte[finalBuffer.length];
+            cipher.transform(finalBuffer, 0, finalBuffer.length, encryptedBuffer, 0);
+            return encryptedBuffer;
+        }
+
+        return finalBuffer;
     }
 }

@@ -3,12 +3,15 @@ package com.arima.ssh.common;
 import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+
+import javax.crypto.ShortBufferException;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class PacketIntegrationTest {
 
     @Test
-    void testWriterReaderCoherence() throws IOException, SshBufferException {
+    void testWriterReaderCoherence() throws IOException, SshBufferException, ShortBufferException{
         // 1. CREATE PACKET
         PacketWriter writer = new PacketWriter();
         
@@ -49,7 +52,7 @@ class PacketIntegrationTest {
     }
 
     @Test
-    void testEmptyPayloadCoherence() throws IOException, SshBufferException {
+    void testEmptyPayloadCoherence() throws IOException, SshBufferException, ShortBufferException {
         PacketWriter writer = new PacketWriter();
         // No payload
         byte[] packetBytes = writer.toByteArray();
