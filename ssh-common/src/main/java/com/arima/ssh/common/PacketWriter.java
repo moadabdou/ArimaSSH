@@ -1,10 +1,14 @@
 package com.arima.ssh.common;
 
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.security.SecureRandom;
 
 import javax.crypto.ShortBufferException;
 
 import com.arima.ssh.common.crypto.SshCipher;
+import com.arima.ssh.common.crypto.SshMac;
 
 /**
  * This class will write packets according to the SSH spec. 
@@ -17,23 +21,20 @@ public class PacketWriter {
     private final SecureRandom random;
     private boolean built = false;
 
-    private SshCipher cipher;
+    private DataOutputStream out;
+    private long sequenceNumber = 0;
 
-    public PacketWriter() {
+    private SshCipher cipher;
+    private SshMac mac;
+
+    public PacketWriter(OutputStream out) {
+        this.out = new DataOutputStream(out);
         this.buffer = new SshBuffer();
         this.random = new SecureRandom();
         // The first 5 bytes are reserved for the packet length and padding length.
         this.buffer.wpos(5);
     }
 
-    public PacketWriter(SshBuffer payload) {
-        this();
-        this.buffer.writeBytes(payload.getCompactData(), 0, payload.wpos());
-    }
-
-    public void setCipher(SshCipher cipher) {
-        this.cipher = cipher;
-    }
 
     //--- WRITING METHODS ---
 
@@ -47,8 +48,12 @@ public class PacketWriter {
         checkState();
         buffer.writeByte(b);
     }
-    
 
+    public void writeBytes(byte[] bytes) {
+        checkState();
+        buffer.writeBytes(bytes, 0, bytes.length);
+    }
+    
     public void writeBoolean(boolean b) {
         checkState();
         buffer.writeBoolean(b);
@@ -117,12 +122,68 @@ public class PacketWriter {
 
         byte[] finalBuffer = buffer.getCompactData();
 
+        //calculate MAC if needed (before encryption, on unencrypted data) per RFC 4253
+        byte[] macBytes = null;
+        if (mac != null) {
+            macBytes = mac.calculate(sequenceNumber, finalBuffer);
+        }
+
+        // Encrypt the packet (but NOT the MAC - MAC is sent in plaintext per RFC 4253)
         if (cipher != null) {
             byte[] encryptedBuffer = new byte[finalBuffer.length];
             cipher.transform(finalBuffer, 0, finalBuffer.length, encryptedBuffer, 0);
-            return encryptedBuffer;
+            finalBuffer = encryptedBuffer;
+        }
+
+        // Append MAC to the end of the encrypted packet 
+
+        /*
+            RFC 4253 Section 6.4:
+            The value of 'mac' resulting from the MAC algorithm MUST be
+            transmitted without encryption as the last part of the packet. 
+        */
+
+        if (macBytes != null) {
+            byte[] withMac = new byte[finalBuffer.length + macBytes.length];
+            System.arraycopy(finalBuffer, 0, withMac, 0, finalBuffer.length);
+            System.arraycopy(macBytes, 0, withMac, finalBuffer.length, macBytes.length);
+            finalBuffer = withMac;
         }
 
         return finalBuffer;
     }
+
+
+    public void writePacket() throws IOException, ShortBufferException {
+        if (out == null) {
+            throw new SshBufferException("Output stream not set for PacketWriter");
+        }
+        byte[] packetBytes = toByteArray();
+        out.write(packetBytes);
+        out.flush();
+        // Increment sequence number after every packet (per RFC 4253)
+        sequenceNumber++;
+
+        //reset for next packet
+        built = false;
+        buffer.rpos(0);
+        buffer.wpos(5); //reserve first 5 bytes again
+    }
+
+    public long getSequenceNumber() {
+        return sequenceNumber;
+    }
+
+
+
+
+    // --- SETTERS ---
+    public void setCipher(SshCipher cipher) {
+        this.cipher = cipher;
+    }
+
+    public void setMac(SshMac mac) {
+        this.mac = mac;
+    }
+
 }

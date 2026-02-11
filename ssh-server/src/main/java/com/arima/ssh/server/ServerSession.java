@@ -20,6 +20,7 @@ import javax.crypto.ShortBufferException;
 import com.arima.ssh.common.*;
 import com.arima.ssh.common.crypto.CipherFactory;
 import com.arima.ssh.common.crypto.SshCipher;
+import com.arima.ssh.common.crypto.SshMac;
 import com.arima.ssh.common.crypto.CipherFactory.CipherConstants;
 import com.arima.ssh.common.kex.*;
 
@@ -55,6 +56,10 @@ public class ServerSession implements Runnable {
 
     private SshCipher currentDecryptor;
     private SshCipher currentEncryptor;
+
+    private SshMac macClient; //C2S
+    private SshMac macServer; //S2C
+
 
     public ServerSession(Socket clientSocket) {
         this.clientSocket = clientSocket;
@@ -95,9 +100,10 @@ public class ServerSession implements Runnable {
 
 
             PacketReader packetReader = new PacketReader(inputStream);
+            PacketWriter packetWriter = new PacketWriter(outputStream);
 
             // send KEXINIT
-            sendKexInit();
+            sendKexInit(packetWriter);
 
             logger.info("Sent KEXINIT to client, waiting for client's KEXINIT...");
 
@@ -277,15 +283,15 @@ public class ServerSession implements Runnable {
 
             // send KEXDH_REPLY message containing host key blob, server public key f, and signature blob
 
-            PacketWriter kexDhReply = new PacketWriter();
-            kexDhReply.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
-            kexDhReply.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
-            kexDhReply.writeByteString(serverF, 0, serverF.length);
-            kexDhReply.writeByteString(signatureBlob, 0, signatureBlob.length);
+            //write the KEXDH_REPLY packet
+            packetWriter.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
+            packetWriter.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
+            packetWriter.writeByteString(serverF, 0, serverF.length);
+            packetWriter.writeByteString(signatureBlob, 0, signatureBlob.length);
 
 
             try {
-                sendPacket(kexDhReply);
+                packetWriter.writePacket();
             } catch (Exception e) {
                 logger.error("Failed to send KEXDH_REPLY packet: {}", e.getMessage());
                 close();
@@ -296,13 +302,13 @@ public class ServerSession implements Runnable {
             logger.info("Sent KEXDH_REPLY to client, key exchange complete!");
 
 
-            // -------- NEWSKEY EXCHANGE PHASE (not implemented yet) --------
+            // -------- NEWSKEY EXCHANGE PHASE --------
 
-            PacketWriter newKeysPacket = new PacketWriter();
-            newKeysPacket.writeByte(SshConstants.SSH_MSG_NEWKEYS);
+
+            packetWriter.writeByte(SshConstants.SSH_MSG_NEWKEYS);
 
             try {
-                sendPacket(newKeysPacket);
+                packetWriter.writePacket();
             } catch (Exception e) {
                 logger.error("Failed to send NEWKEYS packet: {}", e.getMessage());
                 close();
@@ -326,6 +332,9 @@ public class ServerSession implements Runnable {
             CipherConstants cipherC2S_Constants = CipherFactory.getConstants(cipherC2S);
             CipherConstants cipherS2C_Constants = CipherFactory.getConstants(cipherS2C);
 
+            int macKeySizeC2S = SshMac.getMacSize(macC2S);
+            int macKeySizeS2C = SshMac.getMacSize(macS2C);
+
 
             byte[] viC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'A', SessionId, cipherC2S_Constants.ivSize);
             byte[] viS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'B', SessionId, cipherS2C_Constants.ivSize);
@@ -333,14 +342,24 @@ public class ServerSession implements Runnable {
             byte[] encKeyC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'C', SessionId, cipherC2S_Constants.keySize);
             byte[] encKeyS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'D', SessionId, cipherS2C_Constants.keySize);
 
-            byte[] macKeyC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'E', SessionId, 20); // HMAC-SHA1 produces 20 byte keys
-            byte[] macKeyS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'F', SessionId, 20);
+            byte[] macKeyC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'E', SessionId, macKeySizeC2S); 
+            byte[] macKeyS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'F', SessionId, macKeySizeS2C);
 
             try {
                 this.currentDecryptor = new SshCipher(cipherC2S_Constants.transformation, encKeyC2S, viC2S, Cipher.DECRYPT_MODE);
                 this.currentEncryptor = new SshCipher(cipherS2C_Constants.transformation, encKeyS2C, viS2C, Cipher.ENCRYPT_MODE);
             } catch (Exception e) {
                 logger.error("Failed to initialize ciphers: {}", e.getMessage());
+                close();
+                return;
+            }
+
+            try {
+                this.macClient = new SshMac(macC2S, macKeyC2S);
+                this.macServer = new SshMac(macS2C, macKeyS2C);
+
+            } catch (Exception e) {
+                logger.error("Failed to initialize MACs: {}", e.getMessage());
                 close();
                 return;
             }
@@ -361,16 +380,22 @@ public class ServerSession implements Runnable {
             if (msgId != SshConstants.SSH_MSG_NEWKEYS) {
                 throw new IOException("Expected NEWKEYS (21), got " + msgId);
             }
+
             logger.info("Received NEWKEYS");
         
 
             // activate the encryption for incoming packets
+
             packetReader.setCipher(currentDecryptor);
+            packetReader.setMac(macClient);
+
+            packetWriter.setCipher(currentEncryptor);
+            packetWriter.setMac(macServer);
 
 
             logger.info("tunnel is now encrypted with {} for client->server and {} for server->client", cipherC2S, cipherS2C);
 
-            // test to decrypt the next packet from the client 
+            // ------- HANDLE SSH USER AUTHENTICATION AND CHANNEL REQUESTS --------
 
             SshBuffer encryptedTestPacket = null;
             try {
@@ -387,7 +412,34 @@ public class ServerSession implements Runnable {
 
             if( encryptedTestMsgId == 5) { // SSH_MSG_SERVICE_REQUEST = 5
                 String serviceName = encryptedTestPacket.readString();
-                logger.info("Client requested service: {}", serviceName);
+                
+                if (serviceName.equals("ssh-userauth")) {
+
+                    // Accept the service request for "ssh-userauth" by sending SSH_MSG_SERVICE_ACCEPT (6)
+
+                    logger.info("Received service request for ssh-userauth, sending SERVICE_ACCEPT...");
+
+                    packetWriter.writeByte(SshConstants.SSH_MSG_SERVICE_ACCEPT);
+                    packetWriter.writeString(serviceName);
+                    
+                    try {
+                        packetWriter.writePacket();
+                    } catch (Exception e) {
+                        logger.error("Failed to send SERVICE_ACCEPT packet: {}", e.getMessage());
+                        close();
+                        return;
+                    }
+
+                    logger.info("Sent SERVICE_ACCEPT for ssh-userauth.");
+
+                } else {
+                    //TODO: we should send a SSH_MSG_DISCONNECT with reason SSH_DISCONNECT_SERVICE_NOT_AVAILABLE (7) and description "Unsupported service requested"
+                    logger.error("Unsupported service requested: {}", serviceName);
+                }
+
+
+            }else {
+                logger.error("Expected SSH_MSG_SERVICE_REQUEST (5), got {}", encryptedTestMsgId);
             }
 
             try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
@@ -400,15 +452,6 @@ public class ServerSession implements Runnable {
     }
 
 
-    /**
-     * helper to make and send packet
-    */
-
-    private void sendPacket(PacketWriter packet) throws IOException, ShortBufferException {
-        packet.setCipher(currentEncryptor); // Use the server-to-client cipher for encrypting outgoing packets
-        outputStream.write( packet.toByteArray());
-        outputStream.flush();
-    }
 
     /**
      * Reads a line byte-by-byte to avoid over-reading the stream.
@@ -431,7 +474,7 @@ public class ServerSession implements Runnable {
 
     // send SSH_MSG_KEXINIT 
 
-    public void sendKexInit() throws IOException {
+    public void sendKexInit(PacketWriter writer) throws IOException {
 
         SshBuffer payload = new SshBuffer();
 
@@ -455,19 +498,15 @@ public class ServerSession implements Runnable {
 
         this.serverKexInitPayload = payload.getCompactData();
 
-        PacketWriter packet = new PacketWriter(payload);
-
-        byte[] packetBytes = null;
+        writer.writeBytes(serverKexInitPayload);
 
         try {
-            packetBytes = packet.toByteArray();
+            // write the KEXINIT packet to the stream and flush
+            writer.writePacket();
         } catch (Exception e) {
             logger.error("Failed to generate KEXINIT packet: {}", e.getMessage());
             return;
         }
-
-        outputStream.write(packetBytes);
-        outputStream.flush();
 
     }
 

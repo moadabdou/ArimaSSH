@@ -8,6 +8,9 @@ public class SshConstants {
     public static final byte SSH_MSG_KEXDH_INIT = 30;
     public static final byte SSH_MSG_KEXDH_REPLY = 31;
 
+    public static final byte SSH_MSG_SERVICE_REQUEST = 5;
+    public static final byte SSH_MSG_SERVICE_ACCEPT = 6;
+
     // Supported Algorithms
     public static final String PROPOSAL_KEX = "diffie-hellman-group14-sha1";
     public static final String PROPOSAL_HOST_KEY = "ssh-rsa"; 

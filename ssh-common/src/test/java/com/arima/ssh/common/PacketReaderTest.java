@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class PacketReaderTest {
 
     @Test
-    void testReadValidPacket() throws IOException, SshBufferException, ShortBufferException {
+    void testReadValidPacket() throws Exception {
         // Construct a valid packet payload
         // Payload data: "Hello"
         // String encoding in SSH: 4 bytes length, then bytes.

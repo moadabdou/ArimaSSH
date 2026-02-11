@@ -8,6 +8,7 @@ import javax.crypto.Cipher;
 import javax.crypto.ShortBufferException;
 
 import com.arima.ssh.common.crypto.SshCipher;
+import com.arima.ssh.common.crypto.SshMac;
 
 /**
  * This class will read packets according to the SSH spec.
@@ -19,10 +20,11 @@ public class PacketReader {
 
     private long lastPacketLength = 0;
     private long lastPaddingLength = 0;
+    private long packetSequenceNumber = 0; 
     private final DataInputStream in;
 
     private SshCipher cipher;
-    private long sequenceNumber = 0;
+    private SshMac mac;
 
 
     public PacketReader(InputStream inputStream) {
@@ -31,9 +33,10 @@ public class PacketReader {
 
     }
 
-    public void setCipher(SshCipher cipher) {
-        this.cipher = cipher;
+    public long getPacketSequenceNumber() {
+        return packetSequenceNumber;
     }
+
 
     public long getLastPacketLength() {
         return lastPacketLength;
@@ -43,7 +46,7 @@ public class PacketReader {
         return lastPaddingLength;
     }
 
-    public SshBuffer readPacket() throws IOException, SshBufferException, ShortBufferException {
+    public SshBuffer readPacket() throws IOException, SshBufferException, ShortBufferException, SshCorruptedPacketException {
         
         byte[] packetLengthBuffer = new byte[4];
 
@@ -102,12 +105,34 @@ public class PacketReader {
         if (cipher != null) {
             byte[] decryptedPadding = new byte[paddingLength];
             cipher.transform(padding, 0, paddingLength, decryptedPadding, 0);
-            // We ignore the content of padding but we MUST decrypt it to keep cipher state in sync
-            // aka : update the KetStream counter for the padding bytes
+            // We need decrypted padding for MAC verification
+            padding = decryptedPadding;
         }
+
+        // If a MAC is configured, we need to read it and verify it against the data we've read so far
+        if (mac != null) {
+            int macSize = SshMac.getMacSize(mac.getAlgorithm());
+            byte[] receivedMac = new byte[macSize];
+            in.readFully(receivedMac);
+            byte[] computedMac = mac.calculate(packetSequenceNumber, packetLengthBuffer, paddingLengthByte, payload, padding);
+            if (!java.util.Arrays.equals(receivedMac, computedMac)) {
+                throw new SshCorruptedPacketException("MAC verification failed: packet may have been tampered with or corrupted in transit");
+            }
+        }
+
+        // Increment sequence number after every packet (per RFC 4253)
+        packetSequenceNumber = (packetSequenceNumber + 1) & 0xFFFFFFFFL;
 
         return new SshBuffer(payload);
 
+    }
+
+    public void setCipher(SshCipher cipher) {
+        this.cipher = cipher;
+    }
+
+    public void setMac(SshMac mac) {
+        this.mac = mac;
     }
 }
 
