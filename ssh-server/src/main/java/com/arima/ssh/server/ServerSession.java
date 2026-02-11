@@ -18,12 +18,15 @@ import javax.crypto.Cipher;
 import com.arima.ssh.common.*;
 import com.arima.ssh.common.crypto.CipherFactory;
 import com.arima.ssh.common.crypto.SshCipher;
+import com.arima.ssh.common.crypto.SshKeyDecoder;
 import com.arima.ssh.common.crypto.SshMac;
+import com.arima.ssh.common.crypto.SshSignatureVerifier;
 import com.arima.ssh.common.crypto.CipherFactory.CipherConstants;
 import com.arima.ssh.common.kex.*;
 import com.arima.ssh.server.auth.PasswordAuthenticator;
 
 import java.security.MessageDigest;
+import java.security.PublicKey;
 
 public class ServerSession implements Runnable {
 
@@ -490,7 +493,6 @@ public class ServerSession implements Runnable {
                     }else if ("password".equals(method)) {
 
                         
-
                         boolean hasOldPassword = packet.readBoolean();
                         String password = packet.readString();
 
@@ -538,7 +540,124 @@ public class ServerSession implements Runnable {
 
                         }
                             
-                    } else {
+                    }else if ("publickey".equals(method)) {
+
+                        logger.warn("KeyPublic auth attempt by user {}.", user);
+
+                        boolean hasSignature = packet.readBoolean();
+                        String keyAlgo = packet.readString();
+                        byte[] keyBlob = packet.readByteString();
+
+                        // check if its a query 
+                        if (!hasSignature) {
+                            logger.info("Public key query received for algo {}. Responding with allowed=true to indicate the server recognizes this key type.", keyAlgo);
+
+                            packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_PK_OK);
+                            packetWriter.writeString(keyAlgo);
+                            packetWriter.writeByteString(keyBlob, 0, keyBlob.length);
+
+
+                            try {
+                                packetWriter.writePacket();
+                            } catch (Exception e) {
+                                logger.error("Failed to send USERAUTH_PK_OK packet: {}", e.getMessage());
+                                close();
+                                return;
+                            }
+
+                        } else {
+                            
+                            logger.warn("Public key authentication with signature");
+
+                            byte[] keySignatureBlob = packet.readByteString(); 
+                    
+                            // Reconstruct the "Signed Data"
+                            SshBuffer buffer = new SshBuffer();
+                            buffer.writeBytes(this.SessionId, 0 , this.SessionId.length); // 1. Session ID
+                            buffer.writeByte(SshConstants.SSH_MSG_USERAUTH_REQUEST); // 2. Msg ID
+                            buffer.writeString(user);      // 3. Username
+                            buffer.writeString(service);   // 4. Service ("ssh-connection")
+                            buffer.writeString("publickey"); // 5. Method
+                            buffer.writeBoolean(true);     // 6. Has Signature (TRUE)
+                            buffer.writeString(keyAlgo); // 7. Algo Name
+                            buffer.writeBytes(keyBlob, 0, keyBlob.length); // 8. The Key Blob
+                            
+                            byte[] dataToVerify = buffer.getCompactData();
+
+                            // decode the public key from the blob
+                            
+                            PublicKey clientPublicKey = null;
+
+                            try {
+                                clientPublicKey = SshKeyDecoder.decodePublicKey(keyBlob);
+                            } catch (Exception e) {
+                                logger.error("Failed to decode client's public key blob: {}", e.getMessage());
+                                try {
+                                    sendAuthFailure(packetWriter, false); // don't allow retry if key blob is invalid
+                                } catch (Exception ex) {
+                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", ex.getMessage());
+                                    close();
+                                    return;
+                                }
+                                continue;
+                            }
+
+                            // verify the signature using the client's public key
+
+                            boolean signatureValid = false;
+
+                            try {
+                                signatureValid = SshSignatureVerifier.verify(clientPublicKey, dataToVerify, keySignatureBlob);
+                            } catch (Exception e) {
+                                logger.error("Failed to verify client's signature: {}", e.getMessage());
+                                try {
+                                    sendAuthFailure(packetWriter, false); // don't allow retry if signature verification fails
+                                } catch (Exception ex) {
+                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", ex.getMessage());
+                                    close();
+                                    return;
+                                }
+                                continue;
+                            }
+                            
+
+                            if (!signatureValid){
+                                logger.warn("Invalid signature in public key authentication attempt for user {}.", user);
+
+                                try {
+                                    sendAuthFailure(packetWriter, true); // allow retry for invalid signature
+                                } catch (Exception e) {
+                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                                    close();
+                                    return;
+                                }
+                            }
+
+                            // TODO:
+                            // we will check the username and the key blob against our list of authorized keys for that user. If it matches, we accept the authentication.
+                            // but for now we will just accept any valid signature with a key type we support, to demonstrate the flow.
+
+
+                            logger.info("Public key authentication successful for user {}!", user);
+
+
+                            packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_SUCCESS);
+
+                            try {
+                                packetWriter.writePacket();
+                            } catch (Exception e) {
+                                logger.error("Failed to send USERAUTH_SUCCESS packet: {}", e.getMessage());
+                                close();
+                                return;
+                            }
+
+                            authenticated = true;
+                            username = user; 
+
+                        }
+
+
+                    }else {
 
                         logger.warn("Unsupported method: {}", method);
                                 
