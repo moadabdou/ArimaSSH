@@ -8,7 +8,7 @@ class PacketWriterTest {
 
     @Test
     void testWritePacketStructure() throws Exception {
-        PacketWriter writer = new PacketWriter();
+        PacketWriter writer = new PacketWriter(null);
         writer.writeString("Test");
         writer.writeBoolean(true);
         writer.writeUInt32(12345);
@@ -47,7 +47,7 @@ class PacketWriterTest {
 
     @Test
     void testWriteAfterBuilt() throws Exception {
-        PacketWriter writer = new PacketWriter();
+        PacketWriter writer = new PacketWriter(null);
         writer.writeString("Data");
         writer.toByteArray(); // Finalizes the packet
         
@@ -57,7 +57,7 @@ class PacketWriterTest {
     
     @Test
     void testPacketSizeLimit() {
-        PacketWriter writer = new PacketWriter();
+        PacketWriter writer = new PacketWriter(null);
         
         // Create a string that pushes the packet over 35000 bytes
         // 35000 bytes max -> if we create a string of 34990, + 4 bytes header + padding etc it should fail

@@ -11,9 +11,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class PacketIntegrationTest {
 
     @Test
-    void testWriterReaderCoherence() throws IOException, SshBufferException, ShortBufferException{
+    void testWriterReaderCoherence() throws Exception{
         // 1. CREATE PACKET
-        PacketWriter writer = new PacketWriter();
+        PacketWriter writer = new PacketWriter(null);
         
         String testString = "Integration Test";
         boolean testBool = true;
@@ -52,8 +52,8 @@ class PacketIntegrationTest {
     }
 
     @Test
-    void testEmptyPayloadCoherence() throws IOException, SshBufferException, ShortBufferException {
-        PacketWriter writer = new PacketWriter();
+    void testEmptyPayloadCoherence() throws Exception{
+        PacketWriter writer = new PacketWriter(null);
         // No payload
         byte[] packetBytes = writer.toByteArray();
 
