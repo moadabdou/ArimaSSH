@@ -4,12 +4,15 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+
+import javax.crypto.ShortBufferException;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class PacketReaderTest {
 
     @Test
-    void testReadValidPacket() throws IOException, SshBufferException {
+    void testReadValidPacket() throws IOException, SshBufferException, ShortBufferException {
         // Construct a valid packet payload
         // Payload data: "Hello"
         // String encoding in SSH: 4 bytes length, then bytes.

@@ -13,7 +13,14 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 import java.security.SecureRandom;
+
+import javax.crypto.Cipher;
+import javax.crypto.ShortBufferException;
+
 import com.arima.ssh.common.*;
+import com.arima.ssh.common.crypto.CipherFactory;
+import com.arima.ssh.common.crypto.SshCipher;
+import com.arima.ssh.common.crypto.CipherFactory.CipherConstants;
 import com.arima.ssh.common.kex.*;
 
 import java.security.MessageDigest;
@@ -46,6 +53,8 @@ public class ServerSession implements Runnable {
 
     private byte[] SessionId; // The session ID is the exchange hash of the first key exchange, and is used in subsequent key exchanges and authentication.
 
+    private SshCipher currentDecryptor;
+    private SshCipher currentEncryptor;
 
     public ServerSession(Socket clientSocket) {
         this.clientSocket = clientSocket;
@@ -93,8 +102,14 @@ public class ServerSession implements Runnable {
             logger.info("Sent KEXINIT to client, waiting for client's KEXINIT...");
 
             // read client's KEXINIT
-
-            SshBuffer clientKexInitBuffer = packetReader.readPacket();
+            SshBuffer clientKexInitBuffer = null;
+            try {
+                clientKexInitBuffer = packetReader.readPacket();
+            } catch (Exception e) {
+                logger.error("Failed to read client's KEXINIT: {}", e.getMessage());
+                close();
+                return;
+            }
 
             logger.info("Received client's KEXINIT packet, length: {}", clientKexInitBuffer.wpos());
 
@@ -203,7 +218,16 @@ public class ServerSession implements Runnable {
 
             // read client's KEXDH_INIT message
 
-            SshBuffer kexDhInitBuffer = packetReader.readPacket();
+            SshBuffer kexDhInitBuffer = null;
+
+            try {
+                kexDhInitBuffer = packetReader.readPacket();
+            } catch (Exception e) {
+                logger.error("Failed to read client's KEXDH_INIT: {}", e.getMessage());
+                close();
+                return;
+            }
+
             byte kexDhInitType = kexDhInitBuffer.readByte();
             if (kexDhInitType != SshConstants.SSH_MSG_KEXDH_INIT) {
                 logger.error("Expected SSH_MSG_KEXDH_INIT, but got message type: {}", kexDhInitType);
@@ -259,11 +283,112 @@ public class ServerSession implements Runnable {
             kexDhReply.writeByteString(serverF, 0, serverF.length);
             kexDhReply.writeByteString(signatureBlob, 0, signatureBlob.length);
 
-            outputStream.write(kexDhReply.toByteArray());
-            outputStream.flush();
 
-            logger.info("Sent KEXDH_REPLY to client, key exchange complete! Closing session.");
+            try {
+                sendPacket(kexDhReply);
+            } catch (Exception e) {
+                logger.error("Failed to send KEXDH_REPLY packet: {}", e.getMessage());
+                close();
+                return;
+            }
 
+
+            logger.info("Sent KEXDH_REPLY to client, key exchange complete!");
+
+
+            // -------- NEWSKEY EXCHANGE PHASE (not implemented yet) --------
+
+            PacketWriter newKeysPacket = new PacketWriter();
+            newKeysPacket.writeByte(SshConstants.SSH_MSG_NEWKEYS);
+
+            try {
+                sendPacket(newKeysPacket);
+            } catch (Exception e) {
+                logger.error("Failed to send NEWKEYS packet: {}", e.getMessage());
+                close();
+                return;
+            }
+
+            logger.info("Sent NEWKEYS to client.");
+
+            // generate the encryption keys and MAC keys 
+
+            KeyDerivation keyDerivation = null;
+            try {
+                keyDerivation = new KeyDerivation(kex.getHashAlgorithm());
+            } catch (Exception e) {
+                logger.error("Failed to initialize key derivation: {}", e.getMessage());
+                close();
+                return;
+            }
+
+
+            CipherConstants cipherC2S_Constants = CipherFactory.getConstants(cipherC2S);
+            CipherConstants cipherS2C_Constants = CipherFactory.getConstants(cipherS2C);
+
+
+            byte[] viC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'A', SessionId, cipherC2S_Constants.ivSize);
+            byte[] viS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'B', SessionId, cipherS2C_Constants.ivSize);
+
+            byte[] encKeyC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'C', SessionId, cipherC2S_Constants.keySize);
+            byte[] encKeyS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'D', SessionId, cipherS2C_Constants.keySize);
+
+            byte[] macKeyC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'E', SessionId, 20); // HMAC-SHA1 produces 20 byte keys
+            byte[] macKeyS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'F', SessionId, 20);
+
+            try {
+                this.currentDecryptor = new SshCipher(cipherC2S_Constants.transformation, encKeyC2S, viC2S, Cipher.DECRYPT_MODE);
+                this.currentEncryptor = new SshCipher(cipherS2C_Constants.transformation, encKeyS2C, viS2C, Cipher.ENCRYPT_MODE);
+            } catch (Exception e) {
+                logger.error("Failed to initialize ciphers: {}", e.getMessage());
+                close();
+                return;
+            }
+
+
+            // read NEWKEYS from client to confirm they are ready to switch to the new keys
+            SshBuffer packet = null;
+            try {
+                packet = packetReader.readPacket();
+            } catch (Exception e) {
+                logger.error("Failed to read NEWKEYS from client: {}", e.getMessage());
+                close();
+                return;
+            }
+
+            byte msgId = packet.readByte();
+
+            if (msgId != SshConstants.SSH_MSG_NEWKEYS) {
+                throw new IOException("Expected NEWKEYS (21), got " + msgId);
+            }
+            logger.info("Received NEWKEYS");
+        
+
+            // activate the encryption for incoming packets
+            packetReader.setCipher(currentDecryptor);
+
+
+            logger.info("tunnel is now encrypted with {} for client->server and {} for server->client", cipherC2S, cipherS2C);
+
+            // test to decrypt the next packet from the client 
+
+            SshBuffer encryptedTestPacket = null;
+            try {
+                encryptedTestPacket = packetReader.readPacket();
+            } catch (Exception e) {
+                logger.error("Failed to read encrypted packet from client: {}", e.getMessage());
+                close();
+                return;
+            }
+
+            byte encryptedTestMsgId = encryptedTestPacket.readByte();
+            
+            logger.info("Successfully read encrypted packet from client, message type: {}", encryptedTestMsgId);
+
+            if( encryptedTestMsgId == 5) { // SSH_MSG_SERVICE_REQUEST = 5
+                String serviceName = encryptedTestPacket.readString();
+                logger.info("Client requested service: {}", serviceName);
+            }
 
             try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
 
@@ -272,6 +397,17 @@ public class ServerSession implements Runnable {
         } finally {
             close();
         }
+    }
+
+
+    /**
+     * helper to make and send packet
+    */
+
+    private void sendPacket(PacketWriter packet) throws IOException, ShortBufferException {
+        packet.setCipher(currentEncryptor); // Use the server-to-client cipher for encrypting outgoing packets
+        outputStream.write( packet.toByteArray());
+        outputStream.flush();
     }
 
     /**
@@ -321,7 +457,16 @@ public class ServerSession implements Runnable {
 
         PacketWriter packet = new PacketWriter(payload);
 
-        outputStream.write(packet.toByteArray());
+        byte[] packetBytes = null;
+
+        try {
+            packetBytes = packet.toByteArray();
+        } catch (Exception e) {
+            logger.error("Failed to generate KEXINIT packet: {}", e.getMessage());
+            return;
+        }
+
+        outputStream.write(packetBytes);
         outputStream.flush();
 
     }

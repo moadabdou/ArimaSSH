@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class PacketWriterTest {
 
     @Test
-    void testWritePacketStructure() {
+    void testWritePacketStructure() throws Exception {
         PacketWriter writer = new PacketWriter();
         writer.writeString("Test");
         writer.writeBoolean(true);
@@ -46,7 +46,7 @@ class PacketWriterTest {
     }
 
     @Test
-    void testWriteAfterBuilt() {
+    void testWriteAfterBuilt() throws Exception {
         PacketWriter writer = new PacketWriter();
         writer.writeString("Data");
         writer.toByteArray(); // Finalizes the packet

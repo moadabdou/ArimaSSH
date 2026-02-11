@@ -16,6 +16,12 @@ public class KeyDerivation {
 
     public  byte[] calculateKey(BigInteger K, byte[] H, byte discriminator, byte[] sessionId, int keyLength) {
         // The SSH spec defines how to derive keys from K and H. 
+        // key = HASH(K || H || discriminator || session_id)
+        // where : discriminator is a single byte that differs for each key type (e.g., 'A' for client IV, 'B' for server IV, 'C' for client encryption key, etc.)
+        // K : as MPINT (BigInteger) is encoded as a string of bytes with the most significant bit first, and a leading zero byte if the most significant bit is set (to avoid being interpreted as a negative number).
+        // H : is the exchange hash, which is already a byte array.
+        // session_id : is also a byte array.
+        
         // For example, the initial IV for the client is HASH(K || H || "A" || session_id)
         // The initial IV for the server is HASH(K || H || "B" || session_id)
         // The encryption key for the client is HASH(K || H || "C" || session_id)
@@ -25,9 +31,9 @@ public class KeyDerivation {
 
         SshBuffer buffer = new SshBuffer();
         buffer.writeMpint(K);
-        buffer.writeByteString(H, 0, H.length);
+        buffer.writeBytes(H, 0, H.length);
         buffer.writeByte(discriminator);
-        buffer.writeByteString(sessionId, 0, sessionId.length);
+        buffer.writeBytes(sessionId, 0, sessionId.length);
 
         digest.reset();
         byte[] result = digest.digest(buffer.getCompactData());
@@ -40,8 +46,8 @@ public class KeyDerivation {
             // If the required key length is longer than the hash output, we need to hash again with K and H and the previous result
             buffer.reset();
             buffer.writeMpint(K);
-            buffer.writeByteString(H, 0, H.length);
-            buffer.writeByteString(result, 0, result.length);
+            buffer.writeBytes(H, 0, H.length);
+            buffer.writeBytes(result, 0, result.length);
 
             digest.reset();
             result = digest.digest(buffer.getCompactData());
