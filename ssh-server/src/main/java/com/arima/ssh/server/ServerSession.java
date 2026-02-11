@@ -15,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 
 import javax.crypto.Cipher;
-import javax.crypto.ShortBufferException;
 
 import com.arima.ssh.common.*;
 import com.arima.ssh.common.crypto.CipherFactory;
@@ -72,17 +71,19 @@ public class ServerSession implements Runnable {
         
         try {
 
+
             this.inputStream = clientSocket.getInputStream();
             this.outputStream = clientSocket.getOutputStream();
+
+
+
+            // --------  TEXT PROTOCOL PHASE --------
 
 
             //send version string immediately upon connection
             outputStream.write((SERVER_VERSION + "\r\n").getBytes(StandardCharsets.UTF_8));
             outputStream.flush();
             logger.debug("Sent version: {}", SERVER_VERSION);
-
-
-            // --------  TEXT PROTOCOL PHASE --------
 
             //read client's version string
             this.clientVersion = readLine(inputStream);
@@ -94,6 +95,8 @@ public class ServerSession implements Runnable {
             }
             
             logger.info("Client Identification: {}", clientVersion);
+
+
 
 
             // --------  BINARY PROTOCOL PHASE --------
@@ -121,7 +124,6 @@ public class ServerSession implements Runnable {
 
             this.clientKexInitPayload = clientKexInitBuffer.getCompactData();
 
-            // For demonstration, we just log the client's KEXINIT and end the session.
 
             byte kexInitType = clientKexInitBuffer.readByte();
             if (kexInitType != SshConstants.SSH_MSG_KEXINIT) {
@@ -397,25 +399,28 @@ public class ServerSession implements Runnable {
 
             // ------- HANDLE SSH USER AUTHENTICATION AND CHANNEL REQUESTS --------
 
-            SshBuffer encryptedTestPacket = null;
+
+            // client is expected to send a SSH_MSG_SERVICE_REQUEST (5) for "ssh-userauth" as the first encrypted packet
+
+            logger.info("Waiting for client's SERVICE_REQUEST for ssh-userauth...");
+
+            SshBuffer serviceReqBuffer = null;
+
             try {
-                encryptedTestPacket = packetReader.readPacket();
+                serviceReqBuffer = packetReader.readPacket();
             } catch (Exception e) {
                 logger.error("Failed to read encrypted packet from client: {}", e.getMessage());
                 close();
                 return;
             }
 
-            byte encryptedTestMsgId = encryptedTestPacket.readByte();
-            
-            logger.info("Successfully read encrypted packet from client, message type: {}", encryptedTestMsgId);
+            msgId = serviceReqBuffer.readByte();
 
-            if( encryptedTestMsgId == 5) { // SSH_MSG_SERVICE_REQUEST = 5
-                String serviceName = encryptedTestPacket.readString();
-                
-                if (serviceName.equals("ssh-userauth")) {
+            if( msgId == SshConstants.SSH_MSG_SERVICE_REQUEST) { // SSH_MSG_SERVICE_REQUEST = 5
 
-                    // Accept the service request for "ssh-userauth" by sending SSH_MSG_SERVICE_ACCEPT (6)
+                String serviceName = serviceReqBuffer.readString();
+
+                if ( serviceName.equals("ssh-userauth") ){
 
                     logger.info("Received service request for ssh-userauth, sending SERVICE_ACCEPT...");
 
@@ -430,16 +435,96 @@ public class ServerSession implements Runnable {
                         return;
                     }
 
-                    logger.info("Sent SERVICE_ACCEPT for ssh-userauth.");
+                
+                    // ----- Now ready to handle user authentication requests -----
 
-                } else {
-                    //TODO: we should send a SSH_MSG_DISCONNECT with reason SSH_DISCONNECT_SERVICE_NOT_AVAILABLE (7) and description "Unsupported service requested"
+                    boolean authenticated = false;
+                    String username = null;
+
+                    while (!authenticated) {
+
+                        try {
+                            packet = packetReader.readPacket();
+                        } catch (Exception e) {
+                            logger.error("Failed to read encrypted packet from client: {}", e.getMessage());
+                            close();
+                            return;
+                        }
+                        msgId = packet.readByte();
+
+                        if (msgId == SshConstants.SSH_MSG_USERAUTH_REQUEST) {
+                            
+       
+                            String user = packet.readString();
+                            String service = packet.readString();
+                            String method = packet.readString();
+
+                            logger.info("Auth Request: User={}, Service={}, Method={}", user, service, method);
+
+
+                            if ("none".equals(method)) {
+
+                                logger.info("Client requested 'none' auth. Sending supported methods.");
+                                
+
+                                packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_FAILURE);
+                                
+                                packetWriter.writeString("publickey,password"); 
+                            
+                                packetWriter.writeBoolean(false); 
+
+                                try {
+                                    packetWriter.writePacket();
+                                } catch (Exception e) {
+                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                                    close();
+                                    return;
+                                }
+
+                            }else {
+
+                                logger.warn("Unsupported method: {}", method);
+                                
+                                packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_FAILURE);
+                                
+                                packetWriter.writeString("publickey,password"); 
+                            
+                                packetWriter.writeBoolean(false); 
+                                
+                                try {
+                                    packetWriter.writePacket();
+                                } catch (Exception e) {
+                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                                    close();
+                                    return;
+                                }
+
+                            }
+
+                        }else {
+                            // Ignore other packets (like debug/ignore) or disconnect
+                            logger.warn("Unexpected packet during auth: {}", msgId);
+                        }
+
+                    }
+                    
+                    logger.info("User {} Authenticated!", username);
+                        
+
+                }else{
+
                     logger.error("Unsupported service requested: {}", serviceName);
+
+                    sendDisconnectAndClose(packetWriter, SshConstants.SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, serviceName);
+
+                    return;
+
                 }
 
-
             }else {
-                logger.error("Expected SSH_MSG_SERVICE_REQUEST (5), got {}", encryptedTestMsgId);
+
+                logger.error("Expected SSH_MSG_SERVICE_REQUEST (5), got {}", msgId);
+
             }
 
             try{Thread.sleep(5000);}catch(InterruptedException e){/* Ignore */}
@@ -508,6 +593,24 @@ public class ServerSession implements Runnable {
             return;
         }
 
+    }
+
+    /**
+     * send SSH_MSG_DISCONNECT with a reason code and message, then close the connection
+     */
+
+    private void sendDisconnectAndClose(PacketWriter writer, int reasonCode, String message) {
+        try {
+            writer.writeByte(SshConstants.SSH_MSG_DISCONNECT);
+            writer.writeUInt32(reasonCode);
+            writer.writeString(message);
+            writer.writeString(""); // language tag, not used
+            writer.writePacket();
+        } catch (Exception e) {
+            logger.error("Failed to send DISCONNECT packet: {}", e.getMessage());
+        } finally {
+            close();
+        }
     }
 
     /**

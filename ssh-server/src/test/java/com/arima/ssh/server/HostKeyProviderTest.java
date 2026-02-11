@@ -1,9 +1,6 @@
 package com.arima.ssh.server;
 
 import org.junit.jupiter.api.Test;
-import java.security.Signature;
-import java.security.spec.X509EncodedKeySpec;
-import java.util.Base64;
 import static org.junit.jupiter.api.Assertions.*;
 
 class HostKeyProviderTest {

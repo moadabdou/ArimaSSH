@@ -4,7 +4,6 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
-import javax.crypto.Cipher;
 import javax.crypto.ShortBufferException;
 
 import com.arima.ssh.common.crypto.SshCipher;

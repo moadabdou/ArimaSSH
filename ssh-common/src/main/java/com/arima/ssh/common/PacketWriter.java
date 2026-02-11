@@ -83,6 +83,9 @@ public class PacketWriter {
         // First, we need to calculate the packet length and padding length
         int payloadLength = buffer.wpos() - 5; // Exclude the 5 bytes reserved
         int blockSize = 8; // SSH packets must be a multiple of the block size
+        if (cipher != null) {
+            blockSize = Math.max(8, cipher.getBlockSize());
+        }
         
         // RFC 4253: The total length of the packet (including the length field but not the MAC) 
         // MUST be a multiple of the cipher block size or 8, whichever is larger.
@@ -155,9 +158,11 @@ public class PacketWriter {
 
 
     public void writePacket() throws IOException, ShortBufferException {
+
         if (out == null) {
             throw new SshBufferException("Output stream not set for PacketWriter");
         }
+
         byte[] packetBytes = toByteArray();
         out.write(packetBytes);
         out.flush();
@@ -165,6 +170,11 @@ public class PacketWriter {
         sequenceNumber++;
 
         //reset for next packet
+        reset();
+
+    }
+
+    public void reset() {
         built = false;
         buffer.rpos(0);
         buffer.wpos(5); //reserve first 5 bytes again
@@ -173,7 +183,6 @@ public class PacketWriter {
     public long getSequenceNumber() {
         return sequenceNumber;
     }
-
 
 
 
