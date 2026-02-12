@@ -4,13 +4,15 @@ public class SshConstants {
 
     // Message Codes
 
+
     public static final byte SSH_MSG_DISCONNECT = 1;
     public static final byte SSH_MSG_IGNORE = 2;
     public static final byte SSH_MSG_UNIMPLEMENTED = 3;
     public static final byte SSH_MSG_DEBUG = 4;
+
+
     public static final byte SSH_MSG_SERVICE_REQUEST = 5;
     public static final byte SSH_MSG_SERVICE_ACCEPT = 6;
-
 
 
     public static final byte SSH_MSG_KEXINIT = 20;
@@ -29,6 +31,8 @@ public class SshConstants {
     public static final byte SSH_MSG_GLOBAL_REQUEST = 80;
     public static final byte SSH_MSG_REQUEST_SUCCESS = 81;
     public static final byte SSH_MSG_REQUEST_FAILURE = 82;
+
+
     public static final byte SSH_MSG_CHANNEL_OPEN = 90;
     public static final byte SSH_MSG_CHANNEL_OPEN_CONFIRMATION = 91;
     public static final byte SSH_MSG_CHANNEL_OPEN_FAILURE = 92;
@@ -58,6 +62,15 @@ public class SshConstants {
     public static final int SSH_DISCONNECT_AUTH_CANCELLED_BY_USER = 13;
     public static final int SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE = 14;
     public static final int SSH_DISCONNECT_ILLEGAL_USER_NAME = 15;
+
+
+    // Channel Open Failure Reasons
+    public static final int SSH_OPEN_ADMINISTRATIVELY_PROHIBITED = 1;
+    public static final int SSH_OPEN_CONNECT_FAILED = 2;
+    public static final int SSH_OPEN_UNKNOWN_CHANNEL_TYPE = 3;
+    public static final int SSH_OPEN_RESOURCE_SHORTAGE = 4;
+
+    
 
 
     // Supported Authentication Methods

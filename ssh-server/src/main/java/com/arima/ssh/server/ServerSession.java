@@ -24,6 +24,7 @@ import com.arima.ssh.common.crypto.SshSignatureVerifier;
 import com.arima.ssh.common.crypto.CipherFactory.CipherConstants;
 import com.arima.ssh.common.kex.*;
 import com.arima.ssh.server.auth.PasswordAuthenticator;
+import com.arima.ssh.server.channel.ChannelManager;
 
 import java.security.MessageDigest;
 import java.security.PublicKey;
@@ -37,6 +38,8 @@ public class ServerSession implements Runnable {
 
     private final Socket clientSocket;
     private final SshServer server;
+
+    private ChannelManager channelManager;
 
     private InputStream inputStream;
     private OutputStream outputStream;
@@ -68,6 +71,7 @@ public class ServerSession implements Runnable {
     public ServerSession(Socket clientSocket, SshServer server) {
         this.clientSocket = clientSocket;
         this.server = server;
+        this.channelManager = new ChannelManager(this);
     }
 
     @Override
@@ -679,6 +683,44 @@ public class ServerSession implements Runnable {
             }
             
             logger.info("User {} Authenticated!", username);
+
+
+            // ------ SERVER and CLIENT are now peered ----------- 
+
+            logger.info("Entering main loop to handle client requests...");
+
+            while (true) {
+
+                try {
+
+                    SshBuffer incomingPacket = packetReader.readPacket();
+                    byte incomingMsgId = incomingPacket.readByte();
+
+                    logger.info("Received packet with Msg ID: {}", incomingMsgId);
+
+                    if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN) {
+
+                        logger.info("Handling CHANNEL_OPEN request...");
+
+                        byte[] channelOpenResponse = channelManager.handleChannelOpen(incomingPacket);
+                        if (channelOpenResponse != null) {
+                            packetWriter.writeBytes(channelOpenResponse);
+                            packetWriter.writePacket();
+                        }
+
+                        logger.info("Finished handling CHANNEL_OPEN request.");
+
+                    } else {
+                        logger.warn("Received unhandled message type: {}", incomingMsgId);
+                    }
+
+                } catch (Exception e) {
+
+                    logger.error("Error reading or handling packet: ", e);
+                    break;
+
+                }
+            }
                         
 
         } catch (IOException e) {
