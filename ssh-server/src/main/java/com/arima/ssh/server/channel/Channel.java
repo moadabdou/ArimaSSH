@@ -16,7 +16,7 @@ public interface Channel {
      * @param buffer The rest of the payload
      * @return true if we handled it successfully, false if we failed or don't support it.
      */
-    boolean handleRequest(String type, boolean wantReply, SshBuffer buffer);
+    boolean handleRequest(String type, SshBuffer buffer);
     void handleWindowAdjust(long bytesToAdd);
 
     void handleData(byte[] data);

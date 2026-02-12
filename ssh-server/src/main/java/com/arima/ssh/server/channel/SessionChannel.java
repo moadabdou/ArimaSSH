@@ -30,7 +30,7 @@ public class SessionChannel implements Channel {
 
     private ServerSession session;
 
-    private PtyProcess shellProcess;
+    private Process shellProcess;
 
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(SessionChannel.class);
 
@@ -46,11 +46,11 @@ public class SessionChannel implements Channel {
     }
 
     @Override
-    public boolean handleRequest(String type, boolean wantReply, SshBuffer buffer){
+    public boolean handleRequest(String type, SshBuffer buffer){
 
         if ("pty-req".equals(type)) {
 
-            this.term = buffer.readString();
+            this.term = buffer.readString(); // Terminal type (e.g., "xterm-256color")
             this.termCols = buffer.readUInt32();
             this.termRows = buffer.readUInt32();
             this.termWidth = buffer.readUInt32();
@@ -101,14 +101,16 @@ public class SessionChannel implements Channel {
                 }
 
 
-                this.shellProcess = new PtyProcessBuilder(command)
+                PtyProcess process = new PtyProcessBuilder(command)
                         .setEnvironment(env)
                         .start();
 
                 
                 if (termCols > 0 && termRows > 0) {
-                    this.shellProcess.setWinSize(new WinSize((int) termCols, (int) termRows));
+                    process.setWinSize(new WinSize((int) termCols, (int) termRows));
                 }
+
+                this.shellProcess = process;
 
                 logger.info("Shell started for channel {}: PID={}, command={}", id, shellProcess.pid(), String.join(" ", command));
 
@@ -119,6 +121,68 @@ public class SessionChannel implements Channel {
 
             } catch (Exception e) {
                 logger.error("Failed to start shell for channel " + id, e);
+                return false;
+            }
+
+        }else if ("exec".equals(type)){
+
+            String commandString = buffer.readString();
+            logger.info("Exec request for channel {}: command={}", id, commandString);
+
+            try {
+
+                String[] command;
+
+                if (System.getProperty("os.name").toLowerCase().contains("win")) {
+                    // Windows: Use PowerShell or Cmd
+                    command = new String[]{"powershell.exe"}; 
+                } else {
+                    // Linux/Mac: Use Login Shell (bash -l or zsh -l)
+                    String shell = System.getenv("SHELL");
+                    if (shell == null || shell.isEmpty()) {
+                        shell = "/bin/bash";
+                    }
+                    command = new String[]{shell, "-c", commandString};
+                }
+
+                Map<String, String> env = new HashMap<>(System.getenv());
+                env.putAll(this.environment);
+                
+                if (term != null) {
+
+                    env.put("TERM", this.term != null ? this.term : "xterm-256color");
+
+                    PtyProcess process  = new PtyProcessBuilder(command)
+                        .setEnvironment(env)
+                        .start();
+
+                    if (termCols > 0 && termRows > 0) {
+                        process.setWinSize(new WinSize((int) termCols, (int) termRows));
+                    }
+
+                    this.shellProcess = process;
+
+                    logger.info("Exec process using shell started for channel {}: PID={}, command={}", id, shellProcess.pid(), command);
+
+
+                }else {
+
+                    ProcessBuilder pb = new ProcessBuilder(command);
+                    pb.environment().putAll(this.environment);
+                    pb.redirectErrorStream(true); 
+
+                    this.shellProcess = pb.start();
+
+                    logger.info("Exec process using process builder started for channel {}: PID={}, command={}", id, shellProcess.pid(), command);
+
+                }
+
+                startPump();  
+
+                return true;
+
+            } catch (Exception e) {
+                logger.error("Failed to execute command for channel " + id, e);
                 return false;
             }
 
@@ -186,7 +250,9 @@ public class SessionChannel implements Channel {
                     if (read > 0) {
 
                         try{ 
-                            waitForWindow((int)remoteWindow);
+                            
+                            waitForWindow((int)read); // Ensure we have window space is enough for the data we want to send
+
                         } catch (InterruptedException e) {
                             logger.error("Interrupted while waiting for window space for channel " + id, e);
                             Thread.currentThread().interrupt();
