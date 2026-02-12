@@ -1,6 +1,7 @@
 package com.arima.ssh.common;
 
 import org.junit.jupiter.api.Test;
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -8,12 +9,17 @@ class PacketWriterTest {
 
     @Test
     void testWritePacketStructure() throws Exception {
-        PacketWriter writer = new PacketWriter(null);
-        writer.writeString("Test");
-        writer.writeBoolean(true);
-        writer.writeUInt32(12345);
-        
-        byte[] packet = writer.toByteArray();
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PacketWriter writer = new PacketWriter(baos);
+
+        SshBuffer payload = new SshBuffer();
+        payload.writeString("Test");
+        payload.writeBoolean(true);
+        payload.writeUInt32(12345);
+
+        writer.writePacket(payload);
+
+        byte[] packet = baos.toByteArray();
         
         // 1. Basic Checks
         assertNotNull(packet);
@@ -46,29 +52,35 @@ class PacketWriterTest {
     }
 
     @Test
-    void testWriteAfterBuilt() throws Exception {
-        PacketWriter writer = new PacketWriter(null);
-        writer.writeString("Data");
-        writer.toByteArray(); // Finalizes the packet
-        
-        // Attempting to write more should fail
-        assertThrows(SshBufferException.class, () -> writer.writeString("More"));
+    void testMultipleSends() throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PacketWriter writer = new PacketWriter(baos);
+
+        SshBuffer p1 = new SshBuffer();
+        p1.writeString("First");
+        writer.writePacket(p1);
+
+        SshBuffer p2 = new SshBuffer();
+        p2.writeString("Second");
+        writer.writePacket(p2);
+
+        assertEquals(2, writer.getSequenceNumber());
+        assertTrue(baos.size() > 0);
     }
     
     @Test
     void testPacketSizeLimit() {
-        PacketWriter writer = new PacketWriter(null);
-        
-        // Create a string that pushes the packet over 35000 bytes
-        // 35000 bytes max -> if we create a string of 34990, + 4 bytes header + padding etc it should fail
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PacketWriter writer = new PacketWriter(baos);
+
+        SshBuffer payload = new SshBuffer();
         StringBuilder sb = new StringBuilder();
         for(int i=0; i<35000; i++) {
             sb.append("a");
         }
+        payload.writeString(sb.toString());
         
-        writer.writeString(sb.toString());
-        
-        SshBufferException exception = assertThrows(SshBufferException.class, () -> writer.toByteArray());
+        SshBufferException exception = assertThrows(SshBufferException.class, () -> writer.writePacket(payload));
         assertTrue(exception.getMessage().contains("Packet too large"));
     }
 }

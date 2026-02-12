@@ -29,6 +29,7 @@ import com.arima.ssh.server.channel.ChannelManager;
 import java.security.MessageDigest;
 import java.security.PublicKey;
 
+
 public class ServerSession implements Runnable {
 
     private static final Logger logger = LoggerFactory.getLogger(ServerSession.class);
@@ -66,6 +67,8 @@ public class ServerSession implements Runnable {
 
     private SshMac macClient; //C2S
     private SshMac macServer; //S2C
+
+    private PacketWriter packetWriter;
 
 
     public ServerSession(Socket clientSocket, SshServer server) {
@@ -113,10 +116,10 @@ public class ServerSession implements Runnable {
 
 
             PacketReader packetReader = new PacketReader(inputStream);
-            PacketWriter packetWriter = new PacketWriter(outputStream);
+            this.packetWriter = new PacketWriter(outputStream);
 
             // send KEXINIT
-            sendKexInit(packetWriter);
+            sendKexInit();
 
             logger.info("Sent KEXINIT to client, waiting for client's KEXINIT...");
 
@@ -295,15 +298,14 @@ public class ServerSession implements Runnable {
 
             // send KEXDH_REPLY message containing host key blob, server public key f, and signature blob
 
-            //write the KEXDH_REPLY packet
-            packetWriter.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
-            packetWriter.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
-            packetWriter.writeByteString(serverF, 0, serverF.length);
-            packetWriter.writeByteString(signatureBlob, 0, signatureBlob.length);
-
+            SshBuffer kexReplyBuf = new SshBuffer();
+            kexReplyBuf.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
+            kexReplyBuf.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
+            kexReplyBuf.writeByteString(serverF, 0, serverF.length);
+            kexReplyBuf.writeByteString(signatureBlob, 0, signatureBlob.length);
 
             try {
-                packetWriter.writePacket();
+                sendPacket(kexReplyBuf);
             } catch (Exception e) {
                 logger.error("Failed to send KEXDH_REPLY packet: {}", e.getMessage());
                 close();
@@ -317,10 +319,11 @@ public class ServerSession implements Runnable {
             // -------- NEWSKEY EXCHANGE PHASE --------
 
 
-            packetWriter.writeByte(SshConstants.SSH_MSG_NEWKEYS);
+            SshBuffer newKeysBuf = new SshBuffer();
+            newKeysBuf.writeByte(SshConstants.SSH_MSG_NEWKEYS);
 
             try {
-                packetWriter.writePacket();
+                sendPacket(newKeysBuf);
             } catch (Exception e) {
                 logger.error("Failed to send NEWKEYS packet: {}", e.getMessage());
                 close();
@@ -429,7 +432,7 @@ public class ServerSession implements Runnable {
    
             if (msgId != SshConstants.SSH_MSG_SERVICE_REQUEST) {
                 logger.error("Expected SSH_MSG_SERVICE_REQUEST (5), got {}", msgId);
-                sendDisconnectAndClose(packetWriter, SshConstants.SSH_DISCONNECT_PROTOCOL_ERROR, "Expected SERVICE_REQUEST");
+                sendDisconnectAndClose(SshConstants.SSH_DISCONNECT_PROTOCOL_ERROR, "Expected SERVICE_REQUEST");
                 return;
             }
 
@@ -437,18 +440,19 @@ public class ServerSession implements Runnable {
             String serviceName = serviceReqBuffer.readString();
             if (!serviceName.equals("ssh-userauth")) {
                 logger.error("Unsupported service requested: {}", serviceName);
-                sendDisconnectAndClose(packetWriter, SshConstants.SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, serviceName);
+                sendDisconnectAndClose(SshConstants.SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, serviceName);
                 return;
             }
 
            
             logger.info("Received service request for ssh-userauth, sending SERVICE_ACCEPT...");
 
-            packetWriter.writeByte(SshConstants.SSH_MSG_SERVICE_ACCEPT);
-            packetWriter.writeString(serviceName);
-            
+            SshBuffer serviceAcceptBuf = new SshBuffer();
+            serviceAcceptBuf.writeByte(SshConstants.SSH_MSG_SERVICE_ACCEPT);
+            serviceAcceptBuf.writeString(serviceName);
+
             try {
-                packetWriter.writePacket();
+                sendPacket(serviceAcceptBuf);
             } catch (Exception e) {
                 logger.error("Failed to send SERVICE_ACCEPT packet: {}", e.getMessage());
                 close();
@@ -487,7 +491,7 @@ public class ServerSession implements Runnable {
                                 
 
                         try {
-                            sendAuthFailure(packetWriter, true);
+                            sendAuthFailure(true);
                         } catch (Exception e) {
                             logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
                             close();
@@ -517,10 +521,11 @@ public class ServerSession implements Runnable {
 
                             logger.info("User {} authenticated successfully with password!", user);
 
-                            packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_SUCCESS);
+                            SshBuffer authSuccessBuf = new SshBuffer();
+                            authSuccessBuf.writeByte(SshConstants.SSH_MSG_USERAUTH_SUCCESS);
 
                             try {
-                                packetWriter.writePacket();
+                                sendPacket(authSuccessBuf);
                             } catch (Exception e) {
                                 logger.error("Failed to send USERAUTH_SUCCESS packet: {}", e.getMessage());
                                 close();
@@ -535,7 +540,7 @@ public class ServerSession implements Runnable {
                             logger.warn("User {} failed to authenticate with password.", user);
 
                             try {
-                                sendAuthFailure(packetWriter, true); // allow retry for password auth
+                                sendAuthFailure(true); // allow retry for password auth
                             } catch (Exception e) {
                                 logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
                                 close();
@@ -556,13 +561,13 @@ public class ServerSession implements Runnable {
                         if (!hasSignature) {
                             logger.info("Public key query received for algo {}. Responding with allowed=true to indicate the server recognizes this key type.", keyAlgo);
 
-                            packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_PK_OK);
-                            packetWriter.writeString(keyAlgo);
-                            packetWriter.writeByteString(keyBlob, 0, keyBlob.length);
-
+                            SshBuffer pkOkBuf = new SshBuffer();
+                            pkOkBuf.writeByte(SshConstants.SSH_MSG_USERAUTH_PK_OK);
+                            pkOkBuf.writeString(keyAlgo);
+                            pkOkBuf.writeByteString(keyBlob, 0, keyBlob.length);
 
                             try {
-                                packetWriter.writePacket();
+                                sendPacket(pkOkBuf);
                             } catch (Exception e) {
                                 logger.error("Failed to send USERAUTH_PK_OK packet: {}", e.getMessage());
                                 close();
@@ -597,7 +602,7 @@ public class ServerSession implements Runnable {
                             } catch (Exception e) {
                                 logger.error("Failed to decode client's public key blob: {}", e.getMessage());
                                 try {
-                                    sendAuthFailure(packetWriter, false); // don't allow retry if key blob is invalid
+                                    sendAuthFailure(false); // don't allow retry if key blob is invalid
                                 } catch (Exception ex) {
                                     logger.error("Failed to send USERAUTH_FAILURE packet: {}", ex.getMessage());
                                     close();
@@ -615,7 +620,7 @@ public class ServerSession implements Runnable {
                             } catch (Exception e) {
                                 logger.error("Failed to verify client's signature: {}", e.getMessage());
                                 try {
-                                    sendAuthFailure(packetWriter, false); // don't allow retry if signature verification fails
+                                    sendAuthFailure(false); // don't allow retry if signature verification fails
                                 } catch (Exception ex) {
                                     logger.error("Failed to send USERAUTH_FAILURE packet: {}", ex.getMessage());
                                     close();
@@ -629,7 +634,7 @@ public class ServerSession implements Runnable {
                                 logger.warn("Invalid signature in public key authentication attempt for user {}.", user);
 
                                 try {
-                                    sendAuthFailure(packetWriter, true); // allow retry for invalid signature
+                                    sendAuthFailure(true); // allow retry for invalid signature
                                 } catch (Exception e) {
                                     logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
                                     close();
@@ -645,10 +650,11 @@ public class ServerSession implements Runnable {
                             logger.info("Public key authentication successful for user {}!", user);
 
 
-                            packetWriter.writeByte(SshConstants.SSH_MSG_USERAUTH_SUCCESS);
+                            SshBuffer pubkeySuccessBuf = new SshBuffer();
+                            pubkeySuccessBuf.writeByte(SshConstants.SSH_MSG_USERAUTH_SUCCESS);
 
                             try {
-                                packetWriter.writePacket();
+                                sendPacket(pubkeySuccessBuf);
                             } catch (Exception e) {
                                 logger.error("Failed to send USERAUTH_SUCCESS packet: {}", e.getMessage());
                                 close();
@@ -666,7 +672,7 @@ public class ServerSession implements Runnable {
                         logger.warn("Unsupported method: {}", method);
                                 
                         try {
-                            sendAuthFailure(packetWriter, false); // don't allow retry for unsupported methods
+                            sendAuthFailure(false); // don't allow retry for unsupported methods
                         } catch (Exception e) {
                             logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
                             close();
@@ -700,17 +706,23 @@ public class ServerSession implements Runnable {
 
                     if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN) {
 
-                        logger.info("Handling CHANNEL_OPEN request...");
-
                         byte[] channelOpenResponse = channelManager.handleChannelOpen(incomingPacket);
                         if (channelOpenResponse != null) {
-                            packetWriter.writeBytes(channelOpenResponse);
-                            packetWriter.writePacket();
+                            sendPacket(new SshBuffer(channelOpenResponse));
                         }
 
-                        logger.info("Finished handling CHANNEL_OPEN request.");
+                    }else if(incomingMsgId == SshConstants.SSH_MSG_CHANNEL_REQUEST) {
 
-                    } else {
+                        byte[] channelRequestResponse = channelManager.handleChannelRequest(incomingPacket);
+                        if (channelRequestResponse != null) {
+                            sendPacket(new SshBuffer(channelRequestResponse));
+                        }
+
+                    }else if(incomingMsgId == SshConstants.SSH_MSG_CHANNEL_DATA) {
+
+                        channelManager.handleChannelData(incomingPacket);
+
+                    }else {
                         logger.warn("Received unhandled message type: {}", incomingMsgId);
                     }
 
@@ -722,14 +734,12 @@ public class ServerSession implements Runnable {
                 }
             }
                         
-
-        } catch (IOException e) {
+        } catch (Exception e) {
             logger.error("Session error: {}", e.getMessage());
         } finally {
             close();
         }
     }
-
 
 
     /**
@@ -751,9 +761,7 @@ public class ServerSession implements Runnable {
         throw new IOException("Stream ended or line too long before version received");
     }
 
-    // send SSH_MSG_KEXINIT 
-
-    public void sendKexInit(PacketWriter writer) throws IOException {
+    private void sendKexInit() throws IOException {
 
         SshBuffer payload = new SshBuffer();
 
@@ -777,11 +785,8 @@ public class ServerSession implements Runnable {
 
         this.serverKexInitPayload = payload.getCompactData();
 
-        writer.writeBytes(serverKexInitPayload);
-
         try {
-            // write the KEXINIT packet to the stream and flush
-            writer.writePacket();
+            sendPacket(payload);
         } catch (Exception e) {
             logger.error("Failed to generate KEXINIT packet: {}", e.getMessage());
             return;
@@ -795,29 +800,35 @@ public class ServerSession implements Runnable {
      * and a boolean indicating whether the client can try again (false if max attempts reached or method was not recognized)
      */
 
-    private  void sendAuthFailure(PacketWriter writer, boolean canRetry) throws Exception{
-        writer.writeByte(SshConstants.SSH_MSG_USERAUTH_FAILURE);
-        writer.writeString(SshConstants.SUPPORTED_AUTH_METHODS);
-        writer.writeBoolean(canRetry);
-        writer.writePacket();
+    private void sendAuthFailure(boolean canRetry) throws Exception {
+        SshBuffer buf = new SshBuffer();
+        buf.writeByte(SshConstants.SSH_MSG_USERAUTH_FAILURE);
+        buf.writeString(SshConstants.SUPPORTED_AUTH_METHODS);
+        buf.writeBoolean(canRetry);
+        sendPacket(buf);
     }
 
     /**
      * send SSH_MSG_DISCONNECT with a reason code and message, then close the connection
      */
 
-    private void sendDisconnectAndClose(PacketWriter writer, int reasonCode, String message) {
+    private void sendDisconnectAndClose(int reasonCode, String message) {
         try {
-            writer.writeByte(SshConstants.SSH_MSG_DISCONNECT);
-            writer.writeUInt32(reasonCode);
-            writer.writeString(message);
-            writer.writeString(""); // language tag, not used
-            writer.writePacket();
+            SshBuffer buf = new SshBuffer();
+            buf.writeByte(SshConstants.SSH_MSG_DISCONNECT);
+            buf.writeUInt32(reasonCode);
+            buf.writeString(message);
+            buf.writeString(""); // language tag, not used
+            sendPacket(buf);
         } catch (Exception e) {
             logger.error("Failed to send DISCONNECT packet: {}", e.getMessage());
         } finally {
             close();
         }
+    }
+
+    public void sendPacket(SshBuffer buffer) throws IOException {
+        packetWriter.writePacket(buffer);
     }
 
     /**
