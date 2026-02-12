@@ -110,7 +110,6 @@ public class ServerSession implements Runnable {
 
 
 
-
             // --------  BINARY PROTOCOL PHASE --------
 
 
@@ -729,7 +728,24 @@ public class ServerSession implements Runnable {
 
                         channelManager.handleChannelClose(incomingPacket);
                     
-                    }else {
+                    }else if( incomingMsgId == SshConstants.SSH_MSG_GLOBAL_REQUEST){
+
+                        logger.info("Received global request");
+
+                        String requestName = incomingPacket.readString();
+                        boolean wantReply = incomingPacket.readBoolean();
+
+                        logger.info("Global Request: {}, wantReply={}", requestName, wantReply);
+
+                        // we consider all global requests as keep alive requests 
+
+                        if (wantReply) {
+                            SshBuffer reply = new SshBuffer();
+                            reply.writeByte(SshConstants.SSH_MSG_REQUEST_FAILURE);
+                            sendPacket(reply);
+                        }
+
+                    }else{
                         logger.warn("Received unhandled message type: {}", incomingMsgId);
                     }
 
