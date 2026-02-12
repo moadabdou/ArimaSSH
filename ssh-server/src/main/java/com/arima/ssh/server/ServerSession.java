@@ -89,7 +89,6 @@ public class ServerSession implements Runnable {
             this.outputStream = clientSocket.getOutputStream();
 
 
-
             // --------  TEXT PROTOCOL PHASE --------
 
 
