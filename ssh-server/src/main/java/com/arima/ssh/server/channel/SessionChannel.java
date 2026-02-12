@@ -1,10 +1,13 @@
 package com.arima.ssh.server.channel;
 
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 
 import com.arima.ssh.common.SshBuffer;
+import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.server.ServerSession;
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
@@ -108,6 +111,9 @@ public class SessionChannel implements Channel {
 
                 logger.info("Shell started for channel {}: PID={}, command={}", id, shellProcess.pid(), String.join(" ", command));
 
+                // Start pumping data from the shell to the client
+                startPump();   
+
                 return true;
 
             } catch (Exception e) {
@@ -124,10 +130,69 @@ public class SessionChannel implements Channel {
     }
 
     @Override
+    public void handleData(byte[] data) {
+
+        if (shellProcess != null && shellProcess.isAlive()) {
+            try {
+                shellProcess.getOutputStream().write(data);
+                shellProcess.getOutputStream().flush();
+            } catch (IOException e) {
+                logger.error("Failed to write data to shell process for channel " + id, e);
+            }  
+        } else {
+            logger.warn("Received data for channel {} but shell process is not started", id);
+        }
+
+    }
+
+    @Override
     public long getChannelId() { return id; }
 
     @Override
     public long getRemoteId() { return remoteId; }
+
+
+    public void startPump() {
+        new Thread( ()->{
+            try (InputStream shellOut = shellProcess.getInputStream()) {
+                byte[] buffer = new byte[(int)remoteMaxPacket];
+                int read;
+                while ((read = shellOut.read(buffer)) != -1) {
+                    if (read > 0) {
+                        SshBuffer sshBuffer = new SshBuffer();
+                        sshBuffer.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
+                        sshBuffer.writeUInt32(remoteId); // Recipient Channel
+                        sshBuffer.writeByteString(buffer, 0, read); // Data
+                        session.sendPacket(sshBuffer);
+                    }
+                }
+            } catch (IOException e) {
+                logger.error("Error pumping data for channel " + id, e);
+            } finally {
+                try {
+                    sendEof();
+                    sendClose();
+                } catch (IOException e) {
+                    logger.error("Error sending EOF/Close for channel " + id, e);
+                }
+            }
+        }, "SessionChannel-Pump-" + id).start();
+
+    }
+
+    private void sendEof() throws IOException {
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_EOF);
+        buffer.writeUInt32(this.remoteId);
+        session.sendPacket(buffer);
+    }
+
+    private void sendClose() throws IOException {
+         SshBuffer buffer = new SshBuffer();
+         buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_CLOSE);
+         buffer.writeUInt32(this.remoteId);
+         session.sendPacket(buffer);
+    }
 
 
     public Map<String, String> getEnvironment() {

@@ -121,6 +121,26 @@ public class ChannelManager {
 
     }   
 
+    public void handleChannelData(SshBuffer buffer) {
+
+        long recipientId = buffer.readUInt32();
+        byte[] data = buffer.readByteString();
+
+        logger.info("Received channel data: recipientId={}, dataLength={}", recipientId, data.length);
+
+        Channel channel = channels.get(recipientId);
+
+        
+        if (channel != null) {
+            channel.handleData(data);
+        } else {
+            logger.warn("Received data for unknown channel ID: {}", recipientId);
+        }
+
+        logger.info("Handled channel data: recipientId={}, dataLength={}", recipientId, data.length);
+
+    }
+
     public Channel getChannel(long id) {
         return channels.get(id);
     }

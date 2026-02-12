@@ -18,6 +18,6 @@ public interface Channel {
      */
     boolean handleRequest(String type, boolean wantReply, SshBuffer buffer);
 
-    // void handleData(byte[] data);
+    void handleData(byte[] data);
     // void close();
 }

@@ -2,6 +2,7 @@ package com.arima.ssh.common;
 
 import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PacketIntegrationTest {
@@ -9,19 +10,23 @@ class PacketIntegrationTest {
     @Test
     void testWriterReaderCoherence() throws Exception{
         // 1. CREATE PACKET
-        PacketWriter writer = new PacketWriter(null);
-        
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PacketWriter writer = new PacketWriter(baos);
+
+        SshBuffer payload = new SshBuffer();
         String testString = "Integration Test";
         boolean testBool = true;
         long testUInt = 0xDEADBEEFL;
         byte testByte = 42;
 
-        writer.writeString(testString);
-        writer.writeBoolean(testBool);
-        writer.writeUInt32(testUInt);
-        writer.writeByte(testByte);
+        payload.writeString(testString);
+        payload.writeBoolean(testBool);
+        payload.writeUInt32(testUInt);
+        payload.writeByte(testByte);
 
-        byte[] packetBytes = writer.toByteArray();
+        writer.writePacket(payload);
+
+        byte[] packetBytes = baos.toByteArray();
 
         // 2. READ PACKET
         ByteArrayInputStream is = new ByteArrayInputStream(packetBytes);
@@ -49,9 +54,13 @@ class PacketIntegrationTest {
 
     @Test
     void testEmptyPayloadCoherence() throws Exception{
-        PacketWriter writer = new PacketWriter(null);
-        // No payload
-        byte[] packetBytes = writer.toByteArray();
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PacketWriter writer = new PacketWriter(baos);
+
+        SshBuffer payload = new SshBuffer();
+        writer.writePacket(payload);
+
+        byte[] packetBytes = baos.toByteArray();
 
         ByteArrayInputStream is = new ByteArrayInputStream(packetBytes);
         PacketReader reader = new PacketReader(is);
