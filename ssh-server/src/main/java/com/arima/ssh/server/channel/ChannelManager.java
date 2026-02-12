@@ -49,7 +49,7 @@ public class ChannelManager {
             reply.writeString("Unsupported channel type: " + type); // Description
             reply.writeString(""); // Language Tag (empty for now)
             return reply.getCompactData();
-            
+
         }
 
         long myId = nextChannelId++;
@@ -99,20 +99,23 @@ public class ChannelManager {
 
         boolean success = channel.handleRequest(type, wantReply, buffer);
 
+        logger.info("Handled channel request: recipientId={}, type={}, success={}", recipientId, type, success);
+
+
         if (wantReply) {
             SshBuffer reply = new SshBuffer();
+
+            logger.info("Sending channel request reply: recipientId={}, type={}, success={}", recipientId, type, success);
+
             if (success) {
-                logger.info("Successfully handled channel request: recipientId={}, type={}", recipientId, type);
                 reply.writeByte(SshConstants.SSH_MSG_CHANNEL_SUCCESS);
             } else {
-                logger.warn("Failed to handle channel request: recipientId={}, type={}", recipientId, type);
                 reply.writeByte(SshConstants.SSH_MSG_CHANNEL_FAILURE);
             }
             reply.writeUInt32(channel.getRemoteId()); 
+
             return reply.getCompactData();
         }
-
-        logger.info("Handled channel request: recipientId={}, type={}, success={}", recipientId, type, success);
 
         return null;
 

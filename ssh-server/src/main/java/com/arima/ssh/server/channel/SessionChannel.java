@@ -1,6 +1,9 @@
 package com.arima.ssh.server.channel;
 
 
+import java.util.HashMap;
+import java.util.Map;
+
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.server.ServerSession;
 
@@ -16,6 +19,8 @@ public class SessionChannel implements Channel {
     private long termWidth;
     private long termHeight;
     private byte[] terminalModes;
+
+    private final Map<String, String> environment = new HashMap<>();
 
 
     private ServerSession session;
@@ -35,7 +40,7 @@ public class SessionChannel implements Channel {
     public boolean handleRequest(String type, boolean wantReply, SshBuffer buffer){
 
         if ("pty-req".equals(type)) {
-            
+
             this.term = buffer.readString();
             this.termCols = buffer.readUInt32();
             this.termRows = buffer.readUInt32();
@@ -46,6 +51,15 @@ public class SessionChannel implements Channel {
             logger.info("PTY Request: term={}, cols={}, rows={}, width={}, height={}", 
                 term, termCols, termRows, termWidth, termHeight);
 
+            return true;
+
+        }else if ("env".equals(type)){
+
+            String name = buffer.readString(); 
+            String value = buffer.readString(); 
+            environment.put(name, value); 
+            logger.info("Environment variable set: {}={}", name, value); 
+            
             return true;
 
         }
@@ -61,4 +75,9 @@ public class SessionChannel implements Channel {
 
     @Override
     public long getRemoteId() { return remoteId; }
+
+
+    public Map<String, String> getEnvironment() {
+        return environment;
+    }
 }
