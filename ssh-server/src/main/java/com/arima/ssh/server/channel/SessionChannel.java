@@ -12,7 +12,6 @@ import com.arima.ssh.server.ServerSession;
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
 import com.pty4j.WinSize;
-import com.pty4j.unix.Pty;
 
 public class SessionChannel implements Channel {
     
@@ -34,6 +33,8 @@ public class SessionChannel implements Channel {
     private PtyProcess shellProcess;
 
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(SessionChannel.class);
+
+    private final Object lock = new Object();
 
     @Override
     public void init(ServerSession session, long id, long remoteId, long remoteWindow, long remoteMaxPacket) {
@@ -166,6 +167,15 @@ public class SessionChannel implements Channel {
     @Override
     public long getRemoteId() { return remoteId; }
 
+    @Override
+    public void handleWindowAdjust(long bytesToAdd) {
+        synchronized (lock) {
+            remoteWindow += bytesToAdd;
+            logger.info("Window adjusted +{}. New size: {}", bytesToAdd, remoteWindow);
+            lock.notifyAll();
+        }
+    }
+
 
     public void startPump() {
         new Thread( ()->{
@@ -174,10 +184,20 @@ public class SessionChannel implements Channel {
                 int read;
                 while ((read = shellOut.read(buffer)) != -1) {
                     if (read > 0) {
+
+                        try{ 
+                            waitForWindow((int)remoteWindow);
+                        } catch (InterruptedException e) {
+                            logger.error("Interrupted while waiting for window space for channel " + id, e);
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+
                         SshBuffer sshBuffer = new SshBuffer();
                         sshBuffer.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
                         sshBuffer.writeUInt32(remoteId); // Recipient Channel
                         sshBuffer.writeByteString(buffer, 0, read); // Data
+
                         session.sendPacket(sshBuffer);
                     }
                 }
@@ -200,6 +220,18 @@ public class SessionChannel implements Channel {
         }, "SessionChannel-Pump-" + id).start();
 
     }
+
+
+    private void waitForWindow(int len) throws InterruptedException {
+        synchronized (lock) {
+            while (remoteWindow < len) {
+                logger.info("Window exhausted ({} < {}). Waiting...", remoteWindow, len);
+                lock.wait(); // Blocks here until 'handleWindowAdjust' wakes us up
+            }
+            remoteWindow -= len;
+        }
+    }
+
 
     private void sendEof() throws IOException {
         logger.info("Sending EOF for channel {}", id);

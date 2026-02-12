@@ -141,6 +141,25 @@ public class ChannelManager {
 
     }
 
+    public void handleChannelWindowAdjust(SshBuffer buffer) {
+
+        long recipientId = buffer.readUInt32();
+        long bytesToAdd = buffer.readUInt32();
+
+        logger.info("Received channel window adjust: recipientId={}, bytesToAdd={}", recipientId, bytesToAdd);
+
+        Channel channel = channels.get(recipientId);
+
+        if (channel != null) {
+            channel.handleWindowAdjust(bytesToAdd);
+        } else {
+            logger.warn("Received window adjust for unknown channel ID: {}", recipientId);
+        }
+
+        logger.info("Handled channel window adjust: recipientId={}, bytesToAdd={}", recipientId, bytesToAdd);
+
+    }
+
     public void handleChannelClose(SshBuffer buffer) {
 
         long recipientId = buffer.readUInt32();
@@ -158,6 +177,8 @@ public class ChannelManager {
         }
 
     }
+
+    
 
     public void closeAllChannels() {
         logger.info("Closing all channels");

@@ -722,6 +722,10 @@ public class ServerSession implements Runnable {
 
                         channelManager.handleChannelData(incomingPacket);
 
+                    }else if( incomingMsgId == SshConstants.SSH_MSG_CHANNEL_WINDOW_ADJUST){
+
+                        channelManager.handleChannelWindowAdjust(incomingPacket);
+                    
                     }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_CLOSE) {
 
                         channelManager.handleChannelClose(incomingPacket);
