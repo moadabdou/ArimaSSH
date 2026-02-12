@@ -146,6 +146,21 @@ public class SessionChannel implements Channel {
     }
 
     @Override
+    public void close() {
+        logger.info("Closing channel {}", id);
+        if (shellProcess != null) {
+            logger.info("Destroying shell process for channel {}: PID={}", id, shellProcess.pid());
+            shellProcess.destroy();
+            try {
+                shellProcess.waitFor();
+                logger.info("Shell process for channel {} exited with code {}", id, shellProcess.exitValue());
+            } catch (InterruptedException e) {
+                logger.error("Interrupted while waiting for shell process to exit for channel " + id, e);
+            }
+        }
+    }
+
+    @Override
     public long getChannelId() { return id; }
 
     @Override
@@ -171,6 +186,12 @@ public class SessionChannel implements Channel {
             } finally {
                 try {
                     sendEof();
+
+                    if (!shellProcess.isAlive()) {
+                        int exitCode = shellProcess.exitValue();
+                        sendExitStatus(exitCode);
+                    }
+
                     sendClose();
                 } catch (IOException e) {
                     logger.error("Error sending EOF/Close for channel " + id, e);
@@ -181,17 +202,31 @@ public class SessionChannel implements Channel {
     }
 
     private void sendEof() throws IOException {
+        logger.info("Sending EOF for channel {}", id);
         SshBuffer buffer = new SshBuffer();
         buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_EOF);
         buffer.writeUInt32(this.remoteId);
         session.sendPacket(buffer);
     }
 
+    private void sendExitStatus(int exitCode) throws IOException {
+        logger.info("Sending exit status {} for channel {}", exitCode, id);
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_REQUEST);
+        buffer.writeUInt32(this.remoteId);
+        buffer.writeString("exit-status");
+        buffer.writeBoolean(false);
+        buffer.writeUInt32(exitCode); 
+        session.sendPacket(buffer);
+    }
+
     private void sendClose() throws IOException {
-         SshBuffer buffer = new SshBuffer();
-         buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_CLOSE);
-         buffer.writeUInt32(this.remoteId);
-         session.sendPacket(buffer);
+        logger.info("Sending close for channel {}", id);
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_CLOSE);
+        buffer.writeUInt32(this.remoteId);
+        session.sendPacket(buffer);
+        close(); // Ensure we clean up resources 
     }
 
 

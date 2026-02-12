@@ -141,6 +141,36 @@ public class ChannelManager {
 
     }
 
+    public void handleChannelClose(SshBuffer buffer) {
+
+        long recipientId = buffer.readUInt32();
+
+        logger.info("Received channel close: recipientId={}", recipientId);
+
+        Channel channel = channels.get(recipientId);
+
+        if (channel != null) {
+            channel.close();
+            channels.remove(recipientId);
+            logger.info("Closed channel: recipientId={}", recipientId);
+        } else {
+            logger.warn("Received close for unknown channel ID: {}", recipientId);
+        }
+
+    }
+
+    public void closeAllChannels() {
+        logger.info("Closing all channels");
+        for (Channel channel : channels.values()) {
+            try {
+                channel.close();
+            } catch (Exception e) {
+                logger.error("Error closing channel " + channel.getChannelId(), e);
+            }
+        }
+        channels.clear();
+    }
+
     public Channel getChannel(long id) {
         return channels.get(id);
     }
