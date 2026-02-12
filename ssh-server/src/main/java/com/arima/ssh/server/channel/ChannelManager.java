@@ -97,7 +97,7 @@ public class ChannelManager {
 
         }
 
-        boolean success = channel.handleRequest(type, wantReply, buffer);
+        boolean success = channel.handleRequest(type, buffer);
 
         logger.info("Handled channel request: recipientId={}, type={}, success={}", recipientId, type, success);
 
