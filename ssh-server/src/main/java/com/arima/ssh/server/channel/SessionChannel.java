@@ -186,6 +186,22 @@ public class SessionChannel implements Channel {
                 return false;
             }
 
+        }else if ("window-change".equals(type)) {
+
+            int newCols = (int)buffer.readUInt32();
+            int newRows = (int)buffer.readUInt32();
+            buffer.readUInt32();
+            buffer.readUInt32();
+
+            logger.info("Window resized to {}x{}", newCols, newRows);
+
+            if (this.shellProcess instanceof PtyProcess) {
+                PtyProcess pty = (PtyProcess) this.shellProcess;
+                
+                pty.setWinSize(new WinSize(newCols, newRows));
+            }
+            
+            return true;
         }
 
         logger.warn("Unsupported channel request type: {}", type);
