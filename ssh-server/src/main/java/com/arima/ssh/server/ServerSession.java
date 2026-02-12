@@ -722,6 +722,10 @@ public class ServerSession implements Runnable {
 
                         channelManager.handleChannelData(incomingPacket);
 
+                    }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_CLOSE) {
+
+                        channelManager.handleChannelClose(incomingPacket);
+                    
                     }else {
                         logger.warn("Received unhandled message type: {}", incomingMsgId);
                     }
@@ -870,11 +874,17 @@ public class ServerSession implements Runnable {
 
 
     private void close() {
+        
         try {
+
             logger.info("Closing session for {}", clientSocket.getRemoteSocketAddress());
             if (clientSocket != null && !clientSocket.isClosed()) {
                 clientSocket.close();
             }
+
+            // also close all channels
+            channelManager.closeAllChannels();
+
         } catch (IOException e) {
             logger.error("Error closing socket", e);
         }
