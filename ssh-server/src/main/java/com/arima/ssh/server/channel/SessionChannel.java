@@ -1,5 +1,7 @@
 package com.arima.ssh.server.channel;
 
+
+import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.server.ServerSession;
 
 public class SessionChannel implements Channel {
@@ -8,7 +10,17 @@ public class SessionChannel implements Channel {
     private long remoteId;
     private long remoteWindow;
     private long remoteMaxPacket;
+    private String term;
+    private long termCols;
+    private long termRows;
+    private long termWidth;
+    private long termHeight;
+    private byte[] terminalModes;
+
+
     private ServerSession session;
+
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(SessionChannel.class);
 
     @Override
     public void init(ServerSession session, long id, long remoteId, long remoteWindow, long remoteMaxPacket) {
@@ -17,6 +29,31 @@ public class SessionChannel implements Channel {
         this.remoteId = remoteId;
         this.remoteWindow = remoteWindow;
         this.remoteMaxPacket = remoteMaxPacket;
+    }
+
+    @Override
+    public boolean handleRequest(String type, boolean wantReply, SshBuffer buffer){
+
+        if ("pty-req".equals(type)) {
+            
+            this.term = buffer.readString();
+            this.termCols = buffer.readUInt32();
+            this.termRows = buffer.readUInt32();
+            this.termWidth = buffer.readUInt32();
+            this.termHeight = buffer.readUInt32();
+            this.terminalModes = buffer.readByteString(); 
+
+            logger.info("PTY Request: term={}, cols={}, rows={}, width={}, height={}", 
+                term, termCols, termRows, termWidth, termHeight);
+
+            return true;
+
+        }
+
+        logger.warn("Unsupported channel request type: {}", type);
+
+        return false; // Unsupported request
+
     }
 
     @Override

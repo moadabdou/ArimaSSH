@@ -4,6 +4,7 @@ package com.arima.ssh.server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -700,15 +701,19 @@ public class ServerSession implements Runnable {
 
                     if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN) {
 
-                        logger.info("Handling CHANNEL_OPEN request...");
-
                         byte[] channelOpenResponse = channelManager.handleChannelOpen(incomingPacket);
                         if (channelOpenResponse != null) {
                             packetWriter.writeBytes(channelOpenResponse);
                             packetWriter.writePacket();
                         }
 
-                        logger.info("Finished handling CHANNEL_OPEN request.");
+                    }else if(incomingMsgId == SshConstants.SSH_MSG_CHANNEL_REQUEST) {
+
+                        byte[] channelRequestResponse = channelManager.handleChannelRequest(incomingPacket);
+                        if (channelRequestResponse != null) {
+                            packetWriter.writeBytes(channelRequestResponse);
+                            packetWriter.writePacket();
+                        }
 
                     } else {
                         logger.warn("Received unhandled message type: {}", incomingMsgId);
@@ -722,14 +727,12 @@ public class ServerSession implements Runnable {
                 }
             }
                         
-
-        } catch (IOException e) {
+        } catch (Exception e) {
             logger.error("Session error: {}", e.getMessage());
         } finally {
             close();
         }
     }
-
 
 
     /**

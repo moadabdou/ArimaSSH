@@ -1,10 +1,8 @@
 package com.arima.ssh.server.channel;
 
-import com.arima.ssh.common.PacketWriter;
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.server.ServerSession;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -13,7 +11,7 @@ import org.slf4j.LoggerFactory;
 
 public class ChannelManager {
 
-    private final Map<Integer, Channel> channels = new HashMap<>();
+    private final Map<Long, Channel> channels = new HashMap<>();
     private int nextChannelId = 0;
     private final ServerSession session;
     private final Logger logger = LoggerFactory.getLogger(ServerSession.class);
@@ -29,9 +27,20 @@ public class ChannelManager {
         long initialWindow = buffer.readUInt32(); // Client's Window
         long maxPacket = buffer.readUInt32();         // Client's Max Packet
 
+        logger.info("Received channel open request: type={}, senderChannel={}, initialWindow={}, maxPacket={}", 
+            type, senderChannel, initialWindow, maxPacket);
+
         // for now, we only support "session" channels. In the future, we can add "direct-tcpip", "x11", etc.
-        if (!"session".equals(type)) {
-            // return SSH_MSG_CHANNEL_OPEN_FAILURE with reason SSH_OPEN_UNKNOWN_CHANNEL_TYPE
+        
+        Channel channel = null;
+
+
+        if ("session".equals(type)) {
+
+            channel = new SessionChannel();
+
+        } else {
+
             logger.warn("Client requested unsupported channel type: {}", type);
             SshBuffer reply = new SshBuffer();
             reply.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE);
@@ -40,14 +49,12 @@ public class ChannelManager {
             reply.writeString("Unsupported channel type: " + type); // Description
             reply.writeString(""); // Language Tag (empty for now)
             return reply.getCompactData();
+            
         }
 
-
-        int myId = nextChannelId++;
-        SessionChannel channel = new SessionChannel();
+        long myId = nextChannelId++;
         channel.init(session, myId, senderChannel, initialWindow, maxPacket);
         
-
         channels.put(myId, channel);
 
         // Payload: [recipient channel] [sender channel] [initial window] [max packet]
@@ -64,7 +71,54 @@ public class ChannelManager {
         return reply.getCompactData();
     }
     
-    public Channel getChannel(int id) {
+
+    public byte[] handleChannelRequest(SshBuffer buffer){
+
+
+        long recipientId = buffer.readUInt32();
+        String type = buffer.readString();
+        boolean wantReply = buffer.readBoolean(); 
+
+        logger.info("Received channel request: recipientId={}, type={}, wantReply={}", recipientId, type, wantReply);
+    
+        Channel channel = channels.get(recipientId);
+
+        if (channel == null) {
+            
+            logger.warn("Received request for unknown channel ID: {}", recipientId);
+            if (wantReply) {
+                SshBuffer reply = new SshBuffer();
+                reply.writeByte(SshConstants.SSH_MSG_CHANNEL_FAILURE);
+                reply.writeUInt32(recipientId); // Recipient Channel
+                return reply.getCompactData();
+            }
+
+            return null;
+
+        }
+
+        boolean success = channel.handleRequest(type, wantReply, buffer);
+
+        if (wantReply) {
+            SshBuffer reply = new SshBuffer();
+            if (success) {
+                logger.info("Successfully handled channel request: recipientId={}, type={}", recipientId, type);
+                reply.writeByte(SshConstants.SSH_MSG_CHANNEL_SUCCESS);
+            } else {
+                logger.warn("Failed to handle channel request: recipientId={}, type={}", recipientId, type);
+                reply.writeByte(SshConstants.SSH_MSG_CHANNEL_FAILURE);
+            }
+            reply.writeUInt32(channel.getRemoteId()); 
+            return reply.getCompactData();
+        }
+
+        logger.info("Handled channel request: recipientId={}, type={}, success={}", recipientId, type, success);
+
+        return null;
+
+    }   
+
+    public Channel getChannel(long id) {
         return channels.get(id);
     }
 }
