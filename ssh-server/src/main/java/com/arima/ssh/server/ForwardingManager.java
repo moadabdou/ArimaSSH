@@ -12,6 +12,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.arima.ssh.common.SshBuffer;
+import com.arima.ssh.common.SshConstants;
+import com.arima.ssh.server.channel.ForwardedTcpipChannel;
+
 public class ForwardingManager {
 
     private final ServerSession session;
@@ -57,8 +61,25 @@ public class ForwardingManager {
                 Socket incomingSocket = serverSocket.accept();
                 
                 logger.info("Accepted connection on forwarded port {}", bindPort);
+
+                ForwardedTcpipChannel channel = new ForwardedTcpipChannel(incomingSocket);
                 
-                incomingSocket.close(); 
+                long myId = session.getChannelManager().registerChannel(channel);;
+                
+
+                SshBuffer buffer = new SshBuffer();
+                buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN);
+                buffer.writeString("forwarded-tcpip");
+                buffer.writeUInt32(myId);          
+                buffer.writeUInt32(2 * 1024 * 1024);
+                buffer.writeUInt32(32 * 1024);  
+                
+                buffer.writeString(bindAddr);  
+                buffer.writeUInt32(bindPort);   
+                buffer.writeString(incomingSocket.getInetAddress().getHostAddress());
+                buffer.writeUInt32(incomingSocket.getPort());   
+                
+                session.sendPacket(buffer);
                 
             } catch (IOException e) {
                 if (!serverSocket.isClosed()) logger.error("Accept error", e);

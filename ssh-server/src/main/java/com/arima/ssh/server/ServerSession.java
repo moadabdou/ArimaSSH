@@ -733,9 +733,15 @@ public class ServerSession implements Runnable {
 
                     }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_EOF) {
 
-                        long recipientId = incomingPacket.readUInt32();
-                        logger.info("Received EOF for channel {}", recipientId);
-                        // EOF means remote side won't send more data; no response needed
+                        channelManager.handleChannelEOF(incomingPacket);
+                    
+                    }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN_CONFIRMATION) {
+
+                        channelManager.handleChannelOpenConfirmation(incomingPacket);
+                    
+                    }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE) {
+
+                        channelManager.handleChannelOpenFailure(incomingPacket);
                     
                     }else if( incomingMsgId == SshConstants.SSH_MSG_GLOBAL_REQUEST){
 
@@ -921,6 +927,11 @@ public class ServerSession implements Runnable {
         } else {
             throw new IllegalArgumentException("Unsupported KEX algorithm: " + kexAlgo);
         }
+    }
+
+
+    public ChannelManager getChannelManager() {
+        return channelManager;
     }
 
 
