@@ -197,7 +197,63 @@ public class ChannelManager {
 
     }
 
-    
+    public void handleChannelOpenConfirmation(SshBuffer buffer) {
+        long recipientId = buffer.readUInt32();
+        long senderChannel = buffer.readUInt32();
+        long initialWindow = buffer.readUInt32();
+        long maxPacket = buffer.readUInt32();
+
+        logger.info("Received channel open confirmation: recipientId={}, senderChannel={}, initialWindow={}, maxPacket={}", 
+            recipientId, senderChannel, initialWindow, maxPacket);
+
+        Channel channel = channels.get(recipientId);
+        if (channel != null) {
+            channel.init(session, recipientId, senderChannel, initialWindow, maxPacket);
+            logger.info("Channel open confirmed for channel ID {}", recipientId);
+        } else {
+            logger.warn("Received channel open confirmation for unknown channel ID: {}", recipientId);
+        }
+    }
+
+    public void handleChannelOpenFailure(SshBuffer buffer) {
+
+        long recipientId = buffer.readUInt32();
+        long reasonCode = buffer.readUInt32();
+        String description = buffer.readString();
+
+        logger.info("Received channel open failure: recipientId={}: reasonCode={}, description={}", recipientId, reasonCode, description);
+
+        Channel channel = channels.get(recipientId);
+        if (channel != null) {
+            logger.warn("Channel open failed for channel ID {}: reasonCode={}, description={}", recipientId, reasonCode, description);
+            channel.close(); // free any pre-allocated resources
+            channels.remove(recipientId);
+        } else {
+            logger.warn("Received channel open failure for unknown channel ID: {}", recipientId);
+        }
+    }
+
+    public void handleChannelEOF(SshBuffer buffer) {
+        long recipientId = buffer.readUInt32();
+
+        logger.info("Received channel EOF: recipientId={}", recipientId);
+
+        Channel channel = channels.get(recipientId);
+        if (channel != null) {
+            logger.info("Channel EOF received for channel ID {}", recipientId);
+            // We might want to mark the channel as EOF received, but we won't close it yet
+        } else {
+            logger.warn("Received channel EOF for unknown channel ID: {}", recipientId);
+        }
+    }
+
+
+    public long registerChannel(Channel channel) {
+        long myId = nextChannelId++;
+        channels.put(myId, channel);
+        return myId;
+    }
+
 
     public void closeAllChannels() {
         logger.info("Closing all channels");
