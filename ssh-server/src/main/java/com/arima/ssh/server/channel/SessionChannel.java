@@ -9,6 +9,7 @@ import java.util.Map;
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.server.ServerSession;
+import com.arima.ssh.server.subsystem.SftpSubsystem;
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
 import com.pty4j.WinSize;
@@ -37,6 +38,7 @@ public class SessionChannel implements Channel {
     private final Map<String, String> environment = new HashMap<>();
 
     private Process shellProcess;
+    private SftpSubsystem sftpSubsystem;
 
 
     @Override
@@ -205,6 +207,19 @@ public class SessionChannel implements Channel {
             }
             
             return true;
+        }else if ("subsystem".equals(type)) {
+
+            String subsystemName = buffer.readString();
+            logger.info("Subsystem request for channel {}: subsystem={}", id, subsystemName);
+
+            if ("sftp".equals(subsystemName)) {
+                this.sftpSubsystem = new SftpSubsystem(this);
+                return true;
+            } else {
+                logger.warn("Unsupported subsystem requested: {}", subsystemName);
+                return false;
+            }
+
         }
 
         logger.warn("Unsupported channel request type: {}", type);
@@ -216,7 +231,13 @@ public class SessionChannel implements Channel {
     @Override
     public void handleData(byte[] data) {
 
-        if (shellProcess != null && shellProcess.isAlive()) {
+
+        if (sftpSubsystem != null) {
+            sftpSubsystem.handleInput(data);
+            return;
+        }
+
+        if (shellProcess != null && shellProcess.isAlive() ) {
             try {
                 shellProcess.getOutputStream().write(data);
                 shellProcess.getOutputStream().flush();
@@ -231,6 +252,11 @@ public class SessionChannel implements Channel {
 
     @Override
     public void close() {
+
+        if (sftpSubsystem != null) {
+            sftpSubsystem.close();
+        }
+
         if (shellProcess != null) {
             logger.info("Destroying shell process for channel {}: PID={}", id, shellProcess.pid());
             shellProcess.destroy();
@@ -248,6 +274,12 @@ public class SessionChannel implements Channel {
 
     @Override
     public long getRemoteId() { return remoteId; }
+
+
+    @Override 
+    public ServerSession getSession() {
+        return session;
+    }
 
     @Override
     public void handleWindowAdjust(long bytesToAdd) {
