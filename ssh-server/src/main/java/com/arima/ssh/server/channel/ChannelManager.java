@@ -30,8 +30,7 @@ public class ChannelManager {
         logger.info("Received channel open request: type={}, senderChannel={}, initialWindow={}, maxPacket={}", 
             type, senderChannel, initialWindow, maxPacket);
 
-        // for now, we only support "session" channels. In the future, we can add "direct-tcpip", "x11", etc.
-        
+
         Channel channel = null;
 
 
@@ -39,7 +38,27 @@ public class ChannelManager {
 
             channel = new SessionChannel();
 
-        } else {
+        } else if( "direct-tcpip".equals(type)) {
+
+            String targetHost = buffer.readString();
+            long targetPort = buffer.readUInt32();
+            String originatorHost = buffer.readString();
+            long originatorPort = buffer.readUInt32();
+
+            try {
+                channel = new DirectTcpipChannel(targetHost, targetPort, originatorHost, originatorPort);
+            } catch (Exception e) {
+                logger.error("Error creating DirectTcpipChannel: ", e);
+                SshBuffer reply = new SshBuffer();
+                reply.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE);
+                reply.writeUInt32(senderChannel); // Recipient Channel
+                reply.writeUInt32(SshConstants.SSH_OPEN_CONNECT_FAILED); // Reason Code
+                reply.writeString("Failed to connect to " + targetHost + ":" + targetPort); // Description
+                reply.writeString(""); // Language Tag (empty for now)
+                return reply.getCompactData();
+            }
+
+        }else {
 
             logger.warn("Client requested unsupported channel type: {}", type);
             SshBuffer reply = new SshBuffer();
@@ -66,7 +85,7 @@ public class ChannelManager {
         reply.writeUInt32(2 * 1024 * 1024); // RFC 4253 recommends at least 2 MB for the initial window size
         reply.writeUInt32(32 * 1024);     // RFC 4253 recommends at least 32 KB for the max packet size
         
-        logger.info("Channel opened: type={}, senderChannel={}, initialWindow={}, maxPacket={}", type, senderChannel, initialWindow, maxPacket);
+        logger.info("Channel opened: id {}, type={}, senderChannel={}, initialWindow={}, maxPacket={}", myId, type, senderChannel, initialWindow, maxPacket);
 
         return reply.getCompactData();
     }

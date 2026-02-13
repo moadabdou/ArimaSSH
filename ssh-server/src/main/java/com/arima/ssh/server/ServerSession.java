@@ -578,16 +578,16 @@ public class ServerSession implements Runnable {
 
                             byte[] keySignatureBlob = packet.readByteString(); 
                     
-                            // Reconstruct the "Signed Data"
+                            // Reconstruct the "Signed Data" per RFC 4252 Section 7
                             SshBuffer buffer = new SshBuffer();
-                            buffer.writeBytes(this.SessionId, 0 , this.SessionId.length); // 1. Session ID
+                            buffer.writeByteString(this.SessionId, 0 , this.SessionId.length); // 1. Session ID (string)
                             buffer.writeByte(SshConstants.SSH_MSG_USERAUTH_REQUEST); // 2. Msg ID
                             buffer.writeString(user);      // 3. Username
                             buffer.writeString(service);   // 4. Service ("ssh-connection")
                             buffer.writeString("publickey"); // 5. Method
                             buffer.writeBoolean(true);     // 6. Has Signature (TRUE)
                             buffer.writeString(keyAlgo); // 7. Algo Name
-                            buffer.writeBytes(keyBlob, 0, keyBlob.length); // 8. The Key Blob
+                            buffer.writeByteString(keyBlob, 0, keyBlob.length); // 8. The Key Blob (string)
                             
                             byte[] dataToVerify = buffer.getCompactData();
 
@@ -638,6 +638,7 @@ public class ServerSession implements Runnable {
                                     close();
                                     return;
                                 }
+                                continue; // Do not fall through to success
                             }
 
                             // TODO:
@@ -727,6 +728,12 @@ public class ServerSession implements Runnable {
                     }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_CLOSE) {
 
                         channelManager.handleChannelClose(incomingPacket);
+
+                    }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_EOF) {
+
+                        long recipientId = incomingPacket.readUInt32();
+                        logger.info("Received EOF for channel {}", recipientId);
+                        // EOF means remote side won't send more data; no response needed
                     
                     }else if( incomingMsgId == SshConstants.SSH_MSG_GLOBAL_REQUEST){
 
