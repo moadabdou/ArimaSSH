@@ -19,22 +19,25 @@ public class SessionChannel implements Channel {
     private long remoteId;
     private long remoteWindow;
     private long remoteMaxPacket;
+    private ServerSession session;
+
+    private final Object lock = new Object();
+
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(SessionChannel.class);
+
+
     private String term;
     private long termCols;
     private long termRows;
     private long termWidth;
     private long termHeight;
+    @SuppressWarnings("unused")
     private byte[] terminalModes;
 
     private final Map<String, String> environment = new HashMap<>();
 
-    private ServerSession session;
-
     private Process shellProcess;
 
-    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(SessionChannel.class);
-
-    private final Object lock = new Object();
 
     @Override
     public void init(ServerSession session, long id, long remoteId, long remoteWindow, long remoteMaxPacket) {
@@ -228,7 +231,6 @@ public class SessionChannel implements Channel {
 
     @Override
     public void close() {
-        logger.info("Closing channel {}", id);
         if (shellProcess != null) {
             logger.info("Destroying shell process for channel {}: PID={}", id, shellProcess.pid());
             shellProcess.destroy();
@@ -255,7 +257,6 @@ public class SessionChannel implements Channel {
             lock.notifyAll();
         }
     }
-
 
     public void startPump() {
         new Thread( ()->{
@@ -287,6 +288,7 @@ public class SessionChannel implements Channel {
                 logger.error("Error pumping data for channel " + id, e);
             } finally {
                 try {
+
                     sendEof();
 
                     if (!shellProcess.isAlive()) {
