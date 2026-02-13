@@ -259,6 +259,11 @@ public class DirectTcpipChannel implements Channel{
         return remoteId;
     }
 
+    @Override 
+    public ServerSession getSession() {
+        return session;
+    }
+
 
     public String getTargetHost() {
         return targetHost;

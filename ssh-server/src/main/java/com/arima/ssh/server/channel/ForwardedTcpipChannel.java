@@ -242,6 +242,11 @@ public class ForwardedTcpipChannel implements Channel {
         return remoteId;
     }
 
+    @Override 
+    public ServerSession getSession() {
+        return session;
+    }
+
     public Socket getSocket() {
         return socket;
     }
