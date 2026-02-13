@@ -41,6 +41,7 @@ public class ServerSession implements Runnable {
     private final SshServer server;
 
     private ChannelManager channelManager;
+    private ForwardingManager forwardingManager;
 
     private InputStream inputStream;
     private OutputStream outputStream;
@@ -75,6 +76,7 @@ public class ServerSession implements Runnable {
         this.clientSocket = clientSocket;
         this.server = server;
         this.channelManager = new ChannelManager(this);
+        this.forwardingManager = new ForwardingManager(this);
     }
 
     @Override
@@ -744,13 +746,36 @@ public class ServerSession implements Runnable {
 
                         logger.info("Global Request: {}, wantReply={}", requestName, wantReply);
 
-                        // we consider all global requests as keep alive requests 
+                        if ("tcpip-forward".equals(requestName)) {
 
-                        if (wantReply) {
-                            SshBuffer reply = new SshBuffer();
-                            reply.writeByte(SshConstants.SSH_MSG_REQUEST_FAILURE);
-                            sendPacket(reply);
+                            String bindAddress = incomingPacket.readString();
+                            int bindPort = (int)incomingPacket.readUInt32();                            
+
+                            boolean success = forwardingManager.requestForwarding(bindAddress, bindPort);
+
+                            if (wantReply) {
+                                SshBuffer reply = new SshBuffer();
+                                if (success) {
+                                    reply.writeByte(SshConstants.SSH_MSG_REQUEST_SUCCESS);
+                                } else {
+                                    reply.writeByte(SshConstants.SSH_MSG_REQUEST_FAILURE);
+                                }
+                                sendPacket(reply);
+                            }
+
+
+                        } else { 
+
+                            logger.warn("Unsupported global request: {}", requestName);
+                            
+                            if (wantReply) {
+                                SshBuffer reply = new SshBuffer();
+                                reply.writeByte(SshConstants.SSH_MSG_REQUEST_FAILURE);
+                                sendPacket(reply);
+                            }
+
                         }
+
 
                     }else{
                         logger.warn("Received unhandled message type: {}", incomingMsgId);
@@ -910,6 +935,9 @@ public class ServerSession implements Runnable {
 
             // also close all channels
             channelManager.closeAllChannels();
+
+            // also stop all forwarding listeners
+            forwardingManager.closeAll();
 
         } catch (IOException e) {
             logger.error("Error closing socket", e);
