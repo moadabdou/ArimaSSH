@@ -10,6 +10,7 @@ import com.arima.ssh.server.auth.StaticPasswordAuthenticator;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -17,7 +18,7 @@ import java.util.concurrent.Executors;
 public class SshServer
 {
 
-    private final Logger logger = LoggerFactory.getLogger(SshServer.class);
+    public final Logger logger = LoggerFactory.getLogger(SshServer.class);
     private final int PORT = 2222; //TODO: find another port representing the name of Arima and not used by other applications
 
     private ServerSocket serverSocket; 
@@ -28,6 +29,8 @@ public class SshServer
 
     private PasswordAuthenticator passwordAuthenticator;
 
+    private HostKeyProvider hostKeyProvider;
+
 
     public void setPasswordAuthenticator(PasswordAuthenticator passwordAuthenticator) {
         this.passwordAuthenticator = passwordAuthenticator;
@@ -35,6 +38,14 @@ public class SshServer
 
     public PasswordAuthenticator getPasswordAuthenticator() {
         return passwordAuthenticator;
+    }
+
+    public HostKeyProvider getHostKeyProvider() {
+        return hostKeyProvider;
+    }
+
+    public void setHostKeyProvider(HostKeyProvider hostKeyProvider) {
+        this.hostKeyProvider = hostKeyProvider;
     }
 
     public void start(){
@@ -91,13 +102,34 @@ public class SshServer
 
     public static void main( String[] args )
     {
+
+        SshServer sshServer = new SshServer();
+
+        Path ArimaSshDir = Path.of(System.getProperty("user.home")).resolve("arima_ssh");
+
+        if (!ArimaSshDir.toFile().exists()) {
+            try {
+                java.nio.file.Files.createDirectories(ArimaSshDir);
+            } catch (IOException e) {
+                sshServer.logger.error("Failed to create ArimaSSH directory: ", e);
+                return;
+            }
+        }
         
         StaticPasswordAuthenticator authenticator = new StaticPasswordAuthenticator();
         authenticator.addUser("moadabdou", "arima");
 
-        SshServer sshServer = new SshServer();
+        HostKeyProvider hostKeyProvider = new HostKeyProvider(ArimaSshDir.resolve("hostkey.pem"));
+
+        try {
+            hostKeyProvider.init();
+        } catch (Exception e) {
+            sshServer.logger.error("Failed to initialize HostKeyProvider: ", e);
+            return;
+        }
 
         sshServer.setPasswordAuthenticator(authenticator);
+        sshServer.setHostKeyProvider(hostKeyProvider);
 
         sshServer.start();
 
