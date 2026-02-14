@@ -57,6 +57,8 @@ public class ServerSession implements Runnable {
     private String compC2S;
     private String compS2C;
 
+    private KeyExchange kex;
+
 
     private byte[] serverKexInitPayload; 
     private byte[] clientKexInitPayload;
@@ -70,6 +72,11 @@ public class ServerSession implements Runnable {
     private SshMac macServer; //S2C
 
     private PacketWriter packetWriter;
+
+
+    private long gexMin;
+    private long gexPreferred;
+    private long gexMax;
 
 
     public ServerSession(Socket clientSocket, SshServer server) {
@@ -224,7 +231,8 @@ public class ServerSession implements Runnable {
 
             // init the KEX algorithm with the agreed parameters
 
-            KeyExchange kex = KEXAlgoFromName(kexAlgo);
+
+            this.kex = KEXAlgoFromName(kexAlgo);
             kex.init();
 
             HostKeyProvider hostKeyProvider = new HostKeyProvider();
@@ -239,28 +247,80 @@ public class ServerSession implements Runnable {
 
             // read client's KEXDH_INIT message
 
-            SshBuffer kexDhInitBuffer = null;
+
+            SshBuffer kexDhBuffer = null;
 
             try {
-                kexDhInitBuffer = packetReader.readPacket();
+                kexDhBuffer = packetReader.readPacket();
             } catch (Exception e) {
                 logger.error("Failed to read client's KEXDH_INIT: {}", e.getMessage());
                 close();
                 return;
             }
 
-            byte kexDhInitType = kexDhInitBuffer.readByte();
-            if (kexDhInitType != SshConstants.SSH_MSG_KEXDH_INIT) {
-                logger.error("Expected SSH_MSG_KEXDH_INIT, but got message type: {}", kexDhInitType);
+
+            byte kexDhType = kexDhBuffer.readByte();
+
+            //check if the client sent a group exchange request instead of a regular KEXDH_INIT, and if so, handle it accordingly (RFC 8332)
+
+            boolean isGroupExchange = false;
+
+            if (kexDhType == SshConstants.SSH_MSG_KEXDH_GEX_REQUEST){
+
+
+                long min = kexDhBuffer.readUInt32();
+                long preferred = kexDhBuffer.readUInt32(); 
+                long max = kexDhBuffer.readUInt32();
+
+                logger.info("Received KEXDH_GEX_REQUEST: min={}, preferred={}, max={}", min, preferred, max);
+                
+                
+                this.gexMin = min;
+                this.gexPreferred = preferred;
+                this.gexMax = max;
+
+
+                SshBuffer groupMsg = new SshBuffer();
+                groupMsg.writeByte(SshConstants.SSH_MSG_KEXDH_GEX_GROUP); // 31
+                groupMsg.writeMpint(kex.getP());
+                groupMsg.writeMpint(kex.getG());
+                
+                sendPacket(groupMsg);
+
+                isGroupExchange = true;
+
+                logger.info("Sent KEXDH_GEX_GROUP with p and g, waiting for client's KEXDH_INIT ...");
+
+                try {
+                    kexDhBuffer = packetReader.readPacket();
+                } catch (Exception e) {
+                    logger.error("Failed to read client's KEXDH_INIT after GEX_GROUP: {}", e.getMessage());
+                    close();
+                    return;
+                }
+
+            }
+
+
+            byte kexDhInitType = kexDhBuffer.readByte();
+
+
+            if (!(
+                 (isGroupExchange && kexDhInitType == SshConstants.SSH_MSG_KEXDH_GEX_INIT) ||
+                 (!isGroupExchange && kexDhInitType == SshConstants.SSH_MSG_KEXDH_INIT)
+            )){
+                logger.error("Expected KEXDH_INIT (30) or KEXDH_GEX_INIT (32), but got message type: {}", kexDhInitType);
                 close();
                 return;
             }
+
+            SshBuffer kexDhInitBuffer = kexDhBuffer; // For clarity, rename this variable to indicate it's the KEXDH_INIT buffer
 
             // get client's public key e
             BigInteger clientE_BigInteger = kexDhInitBuffer.readMpint();
             byte[] clientE = clientE_BigInteger.toByteArray();
             
-            logger.info("Received client's KEXDH_INIT, e length: {}", clientE.length);
+            logger.info("Received client's KEXDH_INIT with public key e ({} bytes)", clientE.length);
 
             // get server's public key f = g^x mod p
             byte[] serverF = kex.getPublicKey();
@@ -299,7 +359,7 @@ public class ServerSession implements Runnable {
             // send KEXDH_REPLY message containing host key blob, server public key f, and signature blob
 
             SshBuffer kexReplyBuf = new SshBuffer();
-            kexReplyBuf.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
+            kexReplyBuf.writeByte(isGroupExchange? SshConstants.SSH_MSG_KEXDH_GEX_REPLY : SshConstants.SSH_MSG_KEXDH_REPLY);
             kexReplyBuf.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
             kexReplyBuf.writeByteString(serverF, 0, serverF.length);
             kexReplyBuf.writeByteString(signatureBlob, 0, signatureBlob.length);
@@ -902,7 +962,7 @@ public class ServerSession implements Runnable {
      * calculate the exchange hash H for the KEXINIT messages, according to RFC 4253 section 8.
      */
 
-    private byte[] calculateExchangeHash(String HashAlgo, byte[] k_s, byte[] e, byte[] f, BigInteger k ) throws Exception {
+    private byte[] calculateExchangeHash(String HashAlgo, byte[] k_s, byte[] e, byte[] f, BigInteger k) throws Exception {
 
         MessageDigest hash = MessageDigest.getInstance(HashAlgo);
 
@@ -913,6 +973,16 @@ public class ServerSession implements Runnable {
         buffer.writeByteString(clientKexInitPayload, 0, clientKexInitPayload.length);
         buffer.writeByteString(serverKexInitPayload, 0, serverKexInitPayload.length);
         buffer.writeByteString(k_s, 0, k_s.length);
+
+        if (kexAlgo.startsWith("diffie-hellman-group-exchange")) {
+            // Only for Group Exchange (GEX)
+            buffer.writeUInt32(gexMin);
+            buffer.writeUInt32(gexPreferred);
+            buffer.writeUInt32(gexMax);
+            buffer.writeMpint(kex.getP());
+            buffer.writeMpint(kex.getG());
+        }
+
         buffer.writeByteString(e, 0, e.length);
         buffer.writeByteString(f, 0, f.length);
         buffer.writeMpint(k);
@@ -930,7 +1000,9 @@ public class ServerSession implements Runnable {
     public KeyExchange KEXAlgoFromName(String kexAlgo) {
         if (kexAlgo.startsWith("diffie-hellman-group14-sha1")) {
             return new DhGroup14_SHA1();
-        } else {
+        } else if( kexAlgo.startsWith("diffie-hellman-group-exchange-sha256")) {
+            return new DhGroup_SHA256(null, null);
+        }else { 
             throw new IllegalArgumentException("Unsupported KEX algorithm: " + kexAlgo);
         }
     }
