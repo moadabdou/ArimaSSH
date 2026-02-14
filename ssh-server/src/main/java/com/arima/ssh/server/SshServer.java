@@ -4,9 +4,12 @@ package com.arima.ssh.server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.arima.ssh.server.auth.FilePublicKeyAuthenticator;
 import com.arima.ssh.server.auth.PasswordAuthenticator;
+import com.arima.ssh.server.auth.PublicKeyAuthenticator;
 import com.arima.ssh.server.auth.StaticPasswordAuthenticator;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -28,6 +31,7 @@ public class SshServer
 
 
     private PasswordAuthenticator passwordAuthenticator;
+    private PublicKeyAuthenticator publicKeyAuthenticator;
 
     private HostKeyProvider hostKeyProvider;
 
@@ -38,6 +42,14 @@ public class SshServer
 
     public PasswordAuthenticator getPasswordAuthenticator() {
         return passwordAuthenticator;
+    }
+
+    public PublicKeyAuthenticator getPublicKeyAuthenticator() {
+        return publicKeyAuthenticator;
+    }
+
+    public void setPublicKeyAuthenticator(PublicKeyAuthenticator publicKeyAuthenticator) {
+        this.publicKeyAuthenticator = publicKeyAuthenticator;
     }
 
     public HostKeyProvider getHostKeyProvider() {
@@ -105,7 +117,7 @@ public class SshServer
 
         SshServer sshServer = new SshServer();
 
-        Path ArimaSshDir = Path.of(System.getProperty("user.home")).resolve("arima_ssh");
+        Path ArimaSshDir = Path.of(System.getProperty("user.home")).resolve(".arima_ssh");
 
         if (!ArimaSshDir.toFile().exists()) {
             try {
@@ -115,11 +127,26 @@ public class SshServer
                 return;
             }
         }
+
+        //ensure authorized_keys file exists
+        Path authorizedKeysPath = ArimaSshDir.resolve("authorized_keys");
+        if (!authorizedKeysPath.toFile().exists()) {
+            try {
+                java.nio.file.Files.createFile(authorizedKeysPath);
+            } catch (IOException e) {
+                sshServer.logger.error("Failed to create authorized_keys file: ", e);
+                return;
+            }
+        }
         
         StaticPasswordAuthenticator authenticator = new StaticPasswordAuthenticator();
         authenticator.addUser("moadabdou", "arima");
 
+        FilePublicKeyAuthenticator filePublicKeyAuthenticator = new FilePublicKeyAuthenticator(authorizedKeysPath);
+
         HostKeyProvider hostKeyProvider = new HostKeyProvider(ArimaSshDir.resolve("hostkey.pem"));
+        //HostKeyProvider hostKeyProvider = new HostKeyProvider(ArimaSshDir.resolve("hostkey_modern.pem"));
+
 
         try {
             hostKeyProvider.init();
@@ -129,6 +156,7 @@ public class SshServer
         }
 
         sshServer.setPasswordAuthenticator(authenticator);
+        sshServer.setPublicKeyAuthenticator(filePublicKeyAuthenticator);
         sshServer.setHostKeyProvider(hostKeyProvider);
 
         sshServer.start();

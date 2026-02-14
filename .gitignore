@@ -11,4 +11,7 @@ target/
 .DS_Store
 Thumbs.db
 
+# ArimaSSH private keys and authorized keys
+arima_kana_key
+frieren_sama_key
  

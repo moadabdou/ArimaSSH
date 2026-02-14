@@ -619,7 +619,32 @@ public class ServerSession implements Runnable {
 
                         // check if its a query 
                         if (!hasSignature) {
+
                             logger.info("Public key query received for algo {}. Responding with allowed=true to indicate the server recognizes this key type.", keyAlgo);
+
+                            if (server.getPublicKeyAuthenticator() == null) {
+                                logger.warn("No PublicKeyAuthenticator configured on server. Responding to all public key queries with allowed=false.");
+                                try {
+                                    sendAuthFailure(false); // respond with allowed=false to indicate we don't recognize this key type
+                                } catch (Exception e) {
+                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                                    close();
+                                    return;
+                                }
+                                continue;
+                            }
+
+                            if (!server.getPublicKeyAuthenticator().authenticate(user, keyBlob, this)) {
+                                logger.warn("PublicKeyAuthenticator rejected the key query for user {}.", user);
+                                try {
+                                    sendAuthFailure(false); // respond with allowed=false to indicate the key is not authorized for this user
+                                } catch (Exception e) {
+                                    logger.error("Failed to send USERAUTH_FAILURE packet: {}", e.getMessage());
+                                    close();
+                                    return;
+                                }
+                                continue;
+                            }
 
                             SshBuffer pkOkBuf = new SshBuffer();
                             pkOkBuf.writeByte(SshConstants.SSH_MSG_USERAUTH_PK_OK);
