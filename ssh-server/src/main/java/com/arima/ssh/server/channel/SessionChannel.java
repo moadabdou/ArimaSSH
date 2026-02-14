@@ -50,6 +50,10 @@ public class SessionChannel implements Channel {
         this.remoteMaxPacket = remoteMaxPacket;
     }
 
+    public long getRemoteMaxPacket() {
+        return remoteMaxPacket;
+    }
+
     @Override
     public boolean handleRequest(String type, SshBuffer buffer){
 

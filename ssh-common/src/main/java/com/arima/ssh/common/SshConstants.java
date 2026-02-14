@@ -106,10 +106,14 @@ public class SshConstants {
     public static final int SSH_FX_NO_CONNECTION = 6;
     public static final int SSH_FX_CONNECTION_LOST = 7;
     public static final int SSH_FX_OP_UNSUPPORTED = 8;
-
     
-    
-
+    // File Open Flags
+    public static final int SSH_FXF_READ = 0x00000001;
+    public static final int SSH_FXF_WRITE = 0x00000002;
+    public static final int SSH_FXF_APPEND = 0x00000004;
+    public static final int SSH_FXF_CREAT = 0x00000008;
+    public static final int SSH_FXF_TRUNC = 0x00000010;
+    public static final int SSH_FXF_EXCL = 0x00000020;
 
 
     // Supported Authentication Methods

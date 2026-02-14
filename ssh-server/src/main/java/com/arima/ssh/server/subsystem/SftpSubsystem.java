@@ -1,9 +1,11 @@
 package com.arima.ssh.server.subsystem;
 
 
-
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -12,11 +14,11 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,23 +29,10 @@ import com.arima.ssh.server.channel.SessionChannel;
 
 public class SftpSubsystem {
 
-    private static class DirectoryHandle {
-
-        @SuppressWarnings("unused")
-        public final Path path;
-        public final Iterator<Path> iterator;
-
-        DirectoryHandle(Path path) throws IOException {
-            this.path = path;
-            // Files.list returns a Stream, we get its iterator to step through it
-            this.iterator = Files.list(path).iterator();
-        }
-    }
 
     private final SessionChannel channel;
 
-    private final Map<String, DirectoryHandle> directoryHandles = new HashMap<>();
-    private final Map<String, Object> openHandles = new HashMap<>();
+    private final Map<String, SftpHandle > openHandles = new ConcurrentHashMap<>();
     private int handleCounter = 0;
 
     private Logger logger = LoggerFactory.getLogger(SftpSubsystem.class.getName());
@@ -95,7 +84,6 @@ public class SftpSubsystem {
 
         }
 
-
         
     } 
 
@@ -126,17 +114,25 @@ public class SftpSubsystem {
 
             handleReadDir(requestId, payload);
 
-        } else if ( packetType == SshConstants.SSH_FXP_CLOSE) {
+        }else if ( packetType == SshConstants.SSH_FXP_OPEN ){
+
+            handleOpen(requestId, payload);
+
+        }else if ( packetType == SshConstants.SSH_FXP_READ) {
+
+            handleRead(requestId, payload);
+
+        }else if ( packetType == SshConstants.SSH_FXP_WRITE) {
+
+            handleWrite(requestId, payload);
+
+        }else if ( packetType == SshConstants.SSH_FXP_CLOSE) {
 
             handleClose(requestId, payload);
 
         }else if ( packetType == SshConstants.SSH_FXP_STAT || packetType == SshConstants.SSH_FXP_LSTAT) {
 
-            SshBuffer buffer = new SshBuffer(payload);
-            String pathStr = buffer.readString();
-            Path p = resolvePath(pathStr);
-            logger.info("Handling SFTP stat request: requestId={}, path={}", requestId, p);
-            sendAttrs(requestId, p);
+            handleStat(requestId, payload);
 
         }else {
             logger.warn("Unsupported SFTP packet type: {}", packetType);
@@ -191,7 +187,7 @@ public class SftpSubsystem {
 
             String handle = generateHandle();
 
-            directoryHandles.put(handle, new DirectoryHandle(path));
+            openHandles.put(handle, new DirectoryHandle(path));
 
             sendHandleResponse(requestId, handle);
 
@@ -215,15 +211,17 @@ public class SftpSubsystem {
 
         logger.info("Handling SFTP read directory request: reqId={}, handle={}", reqId, handle);
 
-        DirectoryHandle dir = directoryHandles.get(handle);
+        SftpHandle dir = openHandles.get(handle);
 
-        if (dir == null) {
+        if (dir == null || ! (dir instanceof DirectoryHandle)){
             logger.warn("Invalid SFTP handle in read directory request: {}", handle);
             sendStatus(reqId, SshConstants.SSH_FX_NO_SUCH_FILE, "Invalid directory handle");
             return;
         }
 
-        if (!dir.iterator.hasNext()) {
+        DirectoryHandle directoryHandle = (DirectoryHandle) dir;
+
+        if (!directoryHandle.iterator.hasNext()) {
             // End of File (EOF) - This tells the client "List is finished"
             sendStatus(reqId, SshConstants.SSH_FX_EOF, "End of directory");
             return;
@@ -231,8 +229,8 @@ public class SftpSubsystem {
 
         List<Path> batch = new ArrayList<>();
         int count = 0;
-        while (dir.iterator.hasNext() && count < 50) {
-            Path next = dir.iterator.next();
+        while (directoryHandle.iterator.hasNext() && count < 50) {
+            Path next = directoryHandle.iterator.next();
             batch.add(next);
             count++;
         }
@@ -241,20 +239,159 @@ public class SftpSubsystem {
 
     }
 
+    private void handleOpen(long requestId, byte[] payload) {
+
+        SshBuffer request = new SshBuffer(payload);
+
+        String pathString = request.readString();
+        int pflags = (int) request.readUInt32();
+
+        Path path = resolvePath(pathString);
+
+        logger.info("Handling SFTP open file request: requestId={}, path={}, pflags={}", requestId, path, pflags);
+
+        try {
+
+            String handle = generateHandle();
+
+            Set<OpenOption> options = SftpOpenFlags.toOpenOptions(pflags);
+
+            FileChannel channel = FileChannel.open(path, options);
+
+            openHandles.put(handle, new FileHandle(channel));
+
+            sendHandleResponse(requestId, handle);
+
+            logger.info("Sent SFTP open file response: requestId={}, handle={}", requestId, handle);
+
+        }catch (Exception e) {
+
+            logger.warn("Error opening file in SFTP request: {}", e.getMessage());
+
+            sendStatus(requestId, SshConstants.SSH_FX_NO_SUCH_FILE, "File does not exist or cannot be opened with the specified flags");
+
+            return;
+        }
+    }
+
+    private void handleRead(long requestId, byte[] payload) {
+
+        SshBuffer request = new SshBuffer(payload);
+
+        String handle = request.readString();
+        long offset = request.readUInt64();
+        long length = request.readUInt32();
+
+        // Cap the read length to fit within the channel's max packet size.
+        // SFTP framing overhead: 4 (sftp length) + 1 (type) + 4 (reqId) + 4 (data string length) = 13 bytes
+        long maxData = channel.getRemoteMaxPacket() - 13;
+        if (maxData > 0 && length > maxData) {
+            length = maxData;
+        }
+
+        logger.info("Handling SFTP read file request: requestId={}, handle={}, offset={}, length={}", requestId, handle, offset, length);
+
+        SftpHandle fileHandle = openHandles.get(handle);
+
+        if (fileHandle == null || ! (fileHandle instanceof FileHandle)){
+            logger.warn("Invalid SFTP handle in read file request: {}", handle);
+            sendStatus(requestId, SshConstants.SSH_FX_NO_SUCH_FILE, "Invalid file handle");
+            return;
+        }
+
+        FileHandle fh = (FileHandle) fileHandle;
+
+        try {
+
+            byte[] data = fh.read(offset, length);
+
+            if (data.length == 0) {
+
+                // End of File (EOF) - This tells the client "File is finished"
+                sendStatus(requestId, SshConstants.SSH_FX_EOF, "End of file");
+                logger.info("Sent SFTP read file EOF response: requestId={}", requestId);
+                return;
+
+            }
+
+            sendData(requestId, data);
+            logger.info("Sent SFTP read file response: requestId={}, bytesRead={}", requestId, data.length);
+
+
+        }catch(Exception e){
+            logger.error("Error reading from file in SFTP request", e);
+            sendStatus(requestId, SshConstants.SSH_FX_FAILURE, "Error reading from file");
+        }
+    }
+
+    private void handleWrite(long requestId, byte[] payload) {
+
+        SshBuffer request = new SshBuffer(payload);
+
+        String handle = request.readString();
+        long offset = request.readUInt64();
+        byte[] data = request.readByteString();
+
+        logger.info("Handling SFTP write file request: requestId={}, handle={}, offset={}, dataLength={}", requestId, handle, offset, data.length);
+
+        SftpHandle fileHandle = openHandles.get(handle);
+
+        if (fileHandle == null || ! (fileHandle instanceof FileHandle)){
+            logger.warn("Invalid SFTP handle in write file request: {}", handle);
+            sendStatus(requestId, SshConstants.SSH_FX_NO_SUCH_FILE, "Invalid file handle");
+            return;
+        }
+
+        FileHandle fh = (FileHandle) fileHandle;
+
+        try {
+
+            fh.write(offset,  ByteBuffer.wrap(data));
+
+            sendStatus(requestId, SshConstants.SSH_FX_OK, "Write successful");
+
+            logger.info("Sent SFTP write file response: requestId={}, bytesWritten={}", requestId, data.length);
+
+        }catch(Exception e){
+            logger.error("Error writing to file in SFTP request", e);
+            sendStatus(requestId, SshConstants.SSH_FX_FAILURE, "Error writing to file");
+        }
+    }
+
     private void handleClose(long reqId, byte[] buffer){
 
         String handleId = new SshBuffer(buffer).readString();
 
-        if (directoryHandles.remove(handleId) != null || openHandles.remove(handleId) != null) {
+        SftpHandle handle = openHandles.remove(handleId);
+
+        if (handle != null) {
+
+            try{
+                handle.close();
+            }catch(Exception e){
+                logger.error("Error closing SFTP handle: ", e);
+            }
 
             sendStatus(reqId, SshConstants.SSH_FX_OK, "Handle closed");
+
         } else {
 
             sendStatus(reqId, SshConstants.SSH_FX_FAILURE, "Invalid Handle");
         }
     }
 
-    
+    private void handleStat(long reqId, byte[] buffer) {
+
+        String pathString = new SshBuffer(buffer).readString();
+
+        Path path = resolvePath(pathString);
+
+        logger.info("Handling SFTP stat request: reqId={}, path={}", reqId, path);
+
+        sendAttrs(reqId, path);
+    }
+
+    // TODO: add attributes support in the future, currently we just send 0 attributes for simplicity. This is needed for some clients to work properly, e.g. FileZilla needs at least the size attribute to be sent in order to display files in the directory.
     private void sendNameResponse(long reqId, List<Path> files) {
 
         SshBuffer response = new SshBuffer();
@@ -272,10 +409,26 @@ public class SftpSubsystem {
             response.writeString(fileName);
             response.writeString(longName);
 
-            response.writeUInt32(0); 
+            response.writeUInt32(0); // we dont support attributes for now, so we set it to 0
         }
 
         sendPacket(response.getCompactData());
+    }
+
+    private void sendData(long reqId, byte[] data) {
+        
+        SshBuffer response = new SshBuffer();
+        response.writeByte(SshConstants.SSH_FXP_DATA);
+        response.writeUInt32(reqId);
+        response.writeByteString(data, 0, data.length);
+
+        try{
+            sendPacket(response.getCompactData());
+            logger.info("Sent SFTP data response: reqId={}, dataLength={}", reqId, data.length);
+        }catch(Exception e){
+            logger.error("Error sending SFTP data response", e);
+        }
+
     }
 
     private void sendStatus(long reqId, int statusCode, String message) {
@@ -311,7 +464,7 @@ public class SftpSubsystem {
             response.writeUInt64(attrs.size());
             
             // Permissions (Int)
-            // Simple mapping: Directory (040000) or File (0100000) + 755 (rwxr-xr-x)
+            // Simple mapping: Directory (040000) or File (0100000) + standard permissions (0755 for directories, 0644 for files)
             int p = attrs.isDirectory() ? 040755 : 0100644;
             response.writeUInt32(p);
 
@@ -323,6 +476,41 @@ public class SftpSubsystem {
         }
 
         sendPacket(response.getCompactData());
+    }
+
+    private void sendHandleResponse(long requestId, String handle) {
+
+        SshBuffer response = new SshBuffer();
+        response.writeByte(SshConstants.SSH_FXP_HANDLE);
+        response.writeUInt32(requestId);
+        response.writeString(handle);
+
+        try{
+            sendPacket(response.getCompactData());
+        }catch(Exception e){
+            logger.error("Error sending SFTP handle response", e);
+        }
+
+        logger.info("Sent SFTP handle response: requestId={}, handle={}", requestId, handle);
+    }
+
+    private void sendPacket(byte[] payload) {
+
+        SshBuffer packet = new SshBuffer();
+
+        packet.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
+        packet.writeUInt32(channel.getChannelId());
+
+        packet.writeUInt32(payload.length + 4);
+        packet.writeUInt32(payload.length);
+        packet.writeBytes(payload, 0, payload.length);
+
+        try {
+            channel.getSession().sendPacket(packet);
+        } catch (Exception e) {
+            logger.error("Error sending SFTP packet", e);
+        }
+        
     }
 
 
@@ -357,6 +545,7 @@ public class SftpSubsystem {
             return "?????????? 1 user group 0 Jan 01 00:00 " + path.getFileName();
         }
     }
+
     private Path resolvePath(String inputPath) {
 
         if (inputPath == null || inputPath.isEmpty() || ".".equals(inputPath)) {
@@ -373,40 +562,7 @@ public class SftpSubsystem {
 
     }
 
-    private void sendPacket(byte[] payload) {
 
-        SshBuffer packet = new SshBuffer();
-
-        packet.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
-        packet.writeUInt32(channel.getChannelId());
-
-        packet.writeUInt32(payload.length + 4);
-        packet.writeUInt32(payload.length);
-        packet.writeBytes(payload, 0, payload.length);
-
-        try {
-            channel.getSession().sendPacket(packet);
-        } catch (Exception e) {
-            logger.error("Error sending SFTP packet", e);
-        }
-        
-    }
-
-    private void sendHandleResponse(long requestId, String handle) {
-
-        SshBuffer response = new SshBuffer();
-        response.writeByte(SshConstants.SSH_FXP_HANDLE);
-        response.writeUInt32(requestId);
-        response.writeString(handle);
-
-        try{
-            sendPacket(response.getCompactData());
-        }catch(Exception e){
-            logger.error("Error sending SFTP handle response", e);
-        }
-
-        logger.info("Sent SFTP handle response: requestId={}, handle={}", requestId, handle);
-    }
     
     public void close() {
         logger.info("Closing SFTP subsystem");
