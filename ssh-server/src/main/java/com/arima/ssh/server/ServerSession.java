@@ -235,7 +235,7 @@ public class ServerSession implements Runnable {
             this.kex = KEXAlgoFromName(kexAlgo);
             kex.init();
 
-            HostKeyProvider hostKeyProvider = new HostKeyProvider();
+            HostKeyProvider hostKeyProvider = this.server.getHostKeyProvider() != null ? this.server.getHostKeyProvider() : new HostKeyProvider(null);
 
             try {
                 hostKeyProvider.init();

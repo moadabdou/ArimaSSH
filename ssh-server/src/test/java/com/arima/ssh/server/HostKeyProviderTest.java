@@ -8,7 +8,7 @@ class HostKeyProviderTest {
     @Test
     void testKeyGenerationAndSigning() throws Exception {
         // 1. Setup
-        HostKeyProvider provider = new HostKeyProvider();
+        HostKeyProvider provider = new HostKeyProvider(null);
         provider.init();
 
         // 2. Get Public Key Blob

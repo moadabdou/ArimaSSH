@@ -1,7 +1,6 @@
 package com.arima.ssh.server.subsystem;
 
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
