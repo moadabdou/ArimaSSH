@@ -3,12 +3,27 @@ package com.arima.ssh.server;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.IOException;
+import java.nio.file.Path;
+
 class HostKeyProviderTest {
 
     @Test
     void testKeyGenerationAndSigning() throws Exception {
+
+        Path ArimaSshDir = Path.of(System.getProperty("user.home")).resolve("arima_ssh");
+
+        if (!ArimaSshDir.toFile().exists()) {
+            try {
+                java.nio.file.Files.createDirectories(ArimaSshDir);
+            } catch (IOException e) {
+                System.err.println("Failed to create ArimaSSH directory: " + e.getMessage());
+                return;
+            }
+        }
+
         // 1. Setup
-        HostKeyProvider provider = new HostKeyProvider(null);
+        HostKeyProvider provider = new HostKeyProvider(ArimaSshDir.resolve("test_hostkey.pem"));
         provider.init();
 
         // 2. Get Public Key Blob
