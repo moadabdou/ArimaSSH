@@ -152,6 +152,18 @@ public class ChannelManager {
         
         if (channel != null) {
             channel.handleData(data);
+
+            // Send SSH_MSG_CHANNEL_WINDOW_ADJUST to replenish the local window
+            // so the client can continue sending data
+            try {
+                SshBuffer windowAdjust = new SshBuffer();
+                windowAdjust.writeByte(SshConstants.SSH_MSG_CHANNEL_WINDOW_ADJUST);
+                windowAdjust.writeUInt32(channel.getRemoteId());
+                windowAdjust.writeUInt32(data.length);
+                session.sendPacket(windowAdjust);
+            } catch (Exception e) {
+                logger.error("Failed to send window adjust for channel {}: {}", recipientId, e.getMessage());
+            }
         } else {
             logger.warn("Received data for unknown channel ID: {}", recipientId);
         }
@@ -190,6 +202,19 @@ public class ChannelManager {
         if (channel != null) {
             channel.close();
             channels.remove(recipientId);
+
+            //send channel close back 
+
+            SshBuffer reply = new SshBuffer();
+            reply.writeByte(SshConstants.SSH_MSG_CHANNEL_CLOSE);
+            reply.writeUInt32(channel.getRemoteId()); // Recipient Channel
+
+            try {
+                session.sendPacket(reply);
+            } catch (Exception e) {
+                logger.error("Failed to send channel close for channel {}: {}", recipientId, e.getMessage());
+            }
+
             logger.info("Closed channel: recipientId={}", recipientId);
         } else {
             logger.warn("Received close for unknown channel ID: {}", recipientId);
@@ -241,7 +266,28 @@ public class ChannelManager {
         Channel channel = channels.get(recipientId);
         if (channel != null) {
             logger.info("Channel EOF received for channel ID {}", recipientId);
-            // We might want to mark the channel as EOF received, but we won't close it yet
+
+            try {
+                // Send SSH_MSG_CHANNEL_EOF back to the client
+                SshBuffer eofReply = new SshBuffer();
+                eofReply.writeByte(SshConstants.SSH_MSG_CHANNEL_EOF);
+                eofReply.writeUInt32(channel.getRemoteId());
+                session.sendPacket(eofReply);
+                logger.info("Sent channel EOF for channel ID {}", recipientId);
+
+                // Send SSH_MSG_CHANNEL_CLOSE to the client
+                SshBuffer closeReply = new SshBuffer();
+                closeReply.writeByte(SshConstants.SSH_MSG_CHANNEL_CLOSE);
+                closeReply.writeUInt32(channel.getRemoteId());
+                session.sendPacket(closeReply);
+                logger.info("Sent channel close for channel ID {}", recipientId);
+            } catch (Exception e) {
+                logger.error("Failed to send EOF/close for channel {}: {}", recipientId, e.getMessage());
+            }
+
+            // Clean up channel resources
+            channel.close();
+            channels.remove(recipientId);
         } else {
             logger.warn("Received channel EOF for unknown channel ID: {}", recipientId);
         }

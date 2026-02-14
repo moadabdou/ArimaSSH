@@ -36,7 +36,6 @@ public class DirectTcpipChannel implements Channel{
     private volatile boolean closeSent = false;
     private volatile boolean closed = false;
     private long createdAtMillis;
-    private long initializedAtMillis;
 
 
     public DirectTcpipChannel(String targetHost, long targetPort, String originatorHost, long originatorPort)  throws IOException {
@@ -60,7 +59,6 @@ public class DirectTcpipChannel implements Channel{
 
     @Override
     public void init(ServerSession session, long channelId, long remoteId, long remoteWindow, long remoteMaxPacket) {
-        this.initializedAtMillis = System.currentTimeMillis();
         this.session = session;
         this.id = channelId;
         this.remoteId = remoteId;

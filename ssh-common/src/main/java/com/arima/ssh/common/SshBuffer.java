@@ -102,6 +102,23 @@ public class SshBuffer {
         return res & 0xFFFFFFFFL; 
     }
 
+    public long readUInt64() {
+        if (available() < 8) {
+            throw new SshBufferUnderflowException("Underflow: cannot read uint64");
+        }
+        long res = 0;
+        res |= ((long)(readByte() & 0xFF)) << 56;
+        res |= ((long)(readByte() & 0xFF)) << 48;
+        res |= ((long)(readByte() & 0xFF)) << 40;
+        res |= ((long)(readByte() & 0xFF)) << 32;
+        res |= ((long)(readByte() & 0xFF)) << 24;
+        res |= ((long)(readByte() & 0xFF)) << 16;
+        res |= ((long)(readByte() & 0xFF)) << 8;
+        res |= ((long)(readByte() & 0xFF));
+        
+        return res;
+    }
+
     public String readString() {
         int length = (int) readUInt32(); // First 4 bytes tell us the length
         if (length < 0) {
@@ -198,6 +215,18 @@ public class SshBuffer {
         data[wpos++] = (byte) (v);
     }
 
+    public void writeUInt64(long v) {
+        ensureCapacity(8);
+        data[wpos++] = (byte) (v >> 56);
+        data[wpos++] = (byte) (v >> 48);
+        data[wpos++] = (byte) (v >> 40);
+        data[wpos++] = (byte) (v >> 32);
+        data[wpos++] = (byte) (v >> 24);
+        data[wpos++] = (byte) (v >> 16);
+        data[wpos++] = (byte) (v >> 8);
+        data[wpos++] = (byte) (v);
+    }
+
     public void writeString(String s) {
         if (s == null) {
             throw new SshBufferException("Cannot write null string");
@@ -222,8 +251,10 @@ public class SshBuffer {
         writeBytes(bytes, 0, bytes.length);
     }
 
+
     // Get the final raw bytes to send over network
     public byte[] getCompactData() {
         return Arrays.copyOf(data, wpos);
     }
+
 }
