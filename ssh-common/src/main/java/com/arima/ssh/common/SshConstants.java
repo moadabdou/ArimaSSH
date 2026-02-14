@@ -17,8 +17,15 @@ public class SshConstants {
 
     public static final byte SSH_MSG_KEXINIT = 20;
     public static final byte SSH_MSG_NEWKEYS = 21;
+
     public static final byte SSH_MSG_KEXDH_INIT = 30;
     public static final byte SSH_MSG_KEXDH_REPLY = 31;
+
+    public static final byte SSH_MSG_KEXDH_GEX_REQUEST = 34;
+    public static final byte SSH_MSG_KEXDH_GEX_GROUP = 31;
+    public static final byte SSH_MSG_KEXDH_GEX_INIT = 32;
+    public static final byte SSH_MSG_KEXDH_GEX_REPLY = 33;
+
 
 
     public static final byte SSH_MSG_USERAUTH_REQUEST = 50;
@@ -121,8 +128,8 @@ public class SshConstants {
     public static final String SUPPORTED_AUTH_METHODS = "publickey,password";
 
     // Supported Algorithms
-    public static final String PROPOSAL_KEX = "diffie-hellman-group14-sha1";
-    public static final String PROPOSAL_HOST_KEY = "ssh-rsa"; 
+    public static final String PROPOSAL_KEX = "diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha1";
+    public static final String PROPOSAL_HOST_KEY = "rsa-sha2-512,rsa-sha2-256,ssh-rsa"; 
     public static final String PROPOSAL_CIPHER = "aes128-ctr";
     public static final String PROPOSAL_MAC = "hmac-sha1";
     public static final String PROPOSAL_COMPRESSION = "none";
