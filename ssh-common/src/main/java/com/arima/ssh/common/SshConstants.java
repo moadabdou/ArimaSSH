@@ -70,7 +70,46 @@ public class SshConstants {
     public static final int SSH_OPEN_UNKNOWN_CHANNEL_TYPE = 3;
     public static final int SSH_OPEN_RESOURCE_SHORTAGE = 4;
 
+
+    // SFTP Message Codes
+    public static final byte SSH_FXP_INIT = 1;
+    public static final byte SSH_FXP_VERSION = 2;
+    public static final byte SSH_FXP_OPEN = 3;
+    public static final byte SSH_FXP_CLOSE = 4;
+    public static final byte SSH_FXP_READ = 5;
+    public static final byte SSH_FXP_WRITE = 6;
+    public static final byte SSH_FXP_LSTAT = 7;
+    public static final byte SSH_FXP_FSTAT = 8;
+    public static final byte SSH_FXP_SETSTAT = 9;
+    public static final byte SSH_FXP_FSETSTAT = 10;
+    public static final byte SSH_FXP_OPENDIR = 11;
+    public static final byte SSH_FXP_READDIR = 12;
+    public static final byte SSH_FXP_REMOVE = 13;
+    public static final byte SSH_FXP_MKDIR = 14;
+    public static final byte SSH_FXP_RMDIR = 15;
+    public static final byte SSH_FXP_REALPATH = 16;
+    public static final byte SSH_FXP_STAT = 17;
+    public static final byte SSH_FXP_RENAME = 18;
+    public static final byte SSH_FXP_STATUS = 101;
+    public static final byte SSH_FXP_HANDLE = 102;
+    public static final byte SSH_FXP_DATA = 103;
+    public static final byte SSH_FXP_NAME = 104;
+    public static final byte SSH_FXP_ATTRS = 105;
+
+    // SFTP Status Codes
+    public static final int SSH_FX_OK = 0;
+    public static final int SSH_FX_EOF = 1;
+    public static final int SSH_FX_NO_SUCH_FILE = 2;
+    public static final int SSH_FX_PERMISSION_DENIED = 3;
+    public static final int SSH_FX_FAILURE = 4;
+    public static final int SSH_FX_BAD_MESSAGE = 5;
+    public static final int SSH_FX_NO_CONNECTION = 6;
+    public static final int SSH_FX_CONNECTION_LOST = 7;
+    public static final int SSH_FX_OP_UNSUPPORTED = 8;
+
     
+    
+
 
 
     // Supported Authentication Methods

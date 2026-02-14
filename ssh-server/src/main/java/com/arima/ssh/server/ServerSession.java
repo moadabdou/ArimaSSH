@@ -704,8 +704,14 @@ public class ServerSession implements Runnable {
                     byte incomingMsgId = incomingPacket.readByte();
 
                     logger.info("Received packet with Msg ID: {}", incomingMsgId);
+                    if (incomingMsgId == SshConstants.SSH_MSG_DISCONNECT) {
+                        
+                        int reasonCode = (int)incomingPacket.readUInt32();
+                        String description = incomingPacket.readString();
+                        logger.info("Client sent disconnect: {} - {}", reasonCode, description);
+                        break;
 
-                    if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN) {
+                    }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN) {
 
                         byte[] channelOpenResponse = channelManager.handleChannelOpen(incomingPacket);
                         if (channelOpenResponse != null) {
