@@ -1,6 +1,7 @@
 package com.arima.ssh.server.subsystem;
 
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -8,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -133,6 +135,18 @@ public class SftpSubsystem {
         }else if ( packetType == SshConstants.SSH_FXP_STAT || packetType == SshConstants.SSH_FXP_LSTAT) {
 
             handleStat(requestId, payload);
+
+        }else if ( packetType == SshConstants.SSH_FXP_REMOVE || packetType == SshConstants.SSH_FXP_RMDIR) {
+
+            handleSimpleCommand(requestId, payload, Files::delete);
+
+        }else if (packetType == SshConstants.SSH_FXP_MKDIR) {
+
+            handleSimpleCommand(requestId, payload, Files::createDirectory);
+
+        }else if(packetType == SshConstants.SSH_FXP_RENAME) {
+
+            handleRename(requestId, payload);
 
         }else {
             logger.warn("Unsupported SFTP packet type: {}", packetType);
@@ -389,6 +403,45 @@ public class SftpSubsystem {
         logger.info("Handling SFTP stat request: reqId={}, path={}", reqId, path);
 
         sendAttrs(reqId, path);
+    }
+
+    // Functional interface for file operations
+    private interface FileOperation {
+        void execute(Path path) throws IOException;
+    }
+
+    private void handleSimpleCommand(long reqId, byte[] payload, FileOperation op){
+
+        SshBuffer buffer = new SshBuffer(payload);
+        String pathStr = buffer.readString();
+        Path path = resolvePath(pathStr);
+
+        try {
+            op.execute(path);
+            sendStatus(reqId, SshConstants.SSH_FX_OK, "Success");
+        } catch (IOException e) {
+            sendStatus(reqId, SshConstants.SSH_FX_FAILURE,  e.getMessage());
+        }
+
+    }
+
+    private void handleRename(long reqId, byte[] payload)  {
+
+        SshBuffer buffer = new SshBuffer(payload);
+        String oldPathStr = buffer.readString();
+        String newPathStr = buffer.readString();
+        
+        Path oldPath = resolvePath(oldPathStr);
+        Path newPath = resolvePath(newPathStr);
+
+        try {
+            // Atomic move is safer
+            Files.move(oldPath, newPath, StandardCopyOption.ATOMIC_MOVE);
+            sendStatus(reqId, SshConstants.SSH_FX_OK, "Renamed");
+        } catch (IOException e) {
+            sendStatus(reqId, SshConstants.SSH_FX_FAILURE, e.getMessage());
+        }
+
     }
 
     // TODO: add attributes support in the future, currently we just send 0 attributes for simplicity. This is needed for some clients to work properly, e.g. FileZilla needs at least the size attribute to be sent in order to display files in the directory.
