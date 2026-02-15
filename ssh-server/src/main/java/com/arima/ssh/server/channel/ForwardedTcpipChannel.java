@@ -191,15 +191,14 @@ public class ForwardedTcpipChannel implements Channel {
                             break;
                         }
 
-                        SshBuffer sshBuffer = new SshBuffer();
-                        sshBuffer.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
-                        sshBuffer.writeUInt32(remoteId);
-                        sshBuffer.writeByteString(buffer, 0, read);
-
-                        logger.debug("[ForwardedTcpip ch#{}] DATA_OUT: chunk #{}, {} bytes -> client (totalSent={}, remoteWindow={})", 
-                            id, chunkNum, read, totalSent, remoteWindow);
-
-                        session.sendPacket(sshBuffer);
+                        try {
+                            sendData(buffer,read);
+                            logger.debug("[ForwardedTcpip ch#{}] Pump: sent chunk #{}, {} bytes to client (totalSent={})", id, chunkNum, read, totalSent);
+                        } catch (IOException e) {
+                            logger.error("[ForwardedTcpip ch#{}] Pump ERROR sending data to client for chunk #{}: {} ({} bytes)", 
+                                id, chunkNum, e.getMessage(), read, e);
+                            break;
+                        }
                     }
                 }
                 logger.info("[ForwardedTcpip ch#{}] Pump: socket EOF reached (stream ended normally)", id);
@@ -222,7 +221,20 @@ public class ForwardedTcpipChannel implements Channel {
         pumpThread.start();
     }
 
-    private void sendEof() throws IOException {
+    public void sendData(byte[] data, int length) throws IOException {
+        if (closed) {
+            logger.warn("[ForwardedTcpip ch#{}] Attempt to send data after channel is closed, dropping {} bytes", id, data.length);
+            return;
+        }
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
+        buffer.writeUInt32(remoteId);
+        buffer.writeByteString(data, 0, length);
+        session.sendPacket(buffer);
+        logger.debug("[ForwardedTcpip ch#{}] Sent {} bytes to client (totalSent={})", id, data.length, totalBytesSent.get());
+    }
+
+    public void sendEof() throws IOException {
         if (eofSent) {
             logger.debug("[ForwardedTcpip ch#{}] EOF already sent, skipping duplicate", id);
             return;
@@ -236,7 +248,7 @@ public class ForwardedTcpipChannel implements Channel {
         logger.debug("[ForwardedTcpip ch#{}] SSH_MSG_CHANNEL_EOF sent", id);
     }
 
-    private void sendClose() throws IOException {
+    public void sendClose() throws IOException {
         if (closeSent) {
             logger.debug("[ForwardedTcpip ch#{}] CLOSE already sent, skipping duplicate", id);
             return;

@@ -1,4 +1,6 @@
 package com.arima.ssh.server.channel;
+import java.io.IOException;
+
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.server.ServerSession;
 
@@ -11,8 +13,11 @@ public interface Channel {
     
     boolean handleRequest(String type, SshBuffer buffer);
     void handleWindowAdjust(long bytesToAdd);
-
     void handleData(byte[] data);
     void handleEof();
+
+    void sendData(byte[] data, int length) throws IOException;
+    void sendEof() throws IOException;
+    void sendClose() throws IOException;
     void close();
 }

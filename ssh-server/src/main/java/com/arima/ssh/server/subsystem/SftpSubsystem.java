@@ -371,6 +371,27 @@ public class SftpSubsystem {
         }
     }
 
+    public void handleEof() {
+        logger.info("Received EOF on SFTP subsystem, closing all open handles");
+
+        try{
+            channel.sendEof();
+            channel.sendClose();
+        }catch(Exception e){
+            logger.error("Error sending EOF or sending channelclose in SFTP subsystem", e);
+        }
+
+        for (Map.Entry<String, SftpHandle> entry : openHandles.entrySet()) {
+            try {
+                entry.getValue().close();
+            } catch (Exception e) {
+                logger.error("Error closing SFTP handle during EOF handling: ", e);
+            }
+        }
+        
+        openHandles.clear();
+    }
+
     private void handleClose(long reqId, byte[] buffer){
 
         String handleId = new SshBuffer(buffer).readString();
