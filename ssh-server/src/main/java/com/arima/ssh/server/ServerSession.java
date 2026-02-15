@@ -86,6 +86,11 @@ public class ServerSession implements Runnable {
         this.forwardingManager = new ForwardingManager(this);
     }
 
+
+    public SshServer getServer() {
+        return server;
+    }
+
     @Override
     public void run() {
 
@@ -536,8 +541,7 @@ public class ServerSession implements Runnable {
                 msgId = packet.readByte();
 
                 if (msgId == SshConstants.SSH_MSG_USERAUTH_REQUEST) {
-                            
-       
+
                     String user = packet.readString();
                     String service = packet.readString();
                     String method = packet.readString();

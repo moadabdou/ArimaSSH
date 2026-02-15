@@ -123,6 +123,22 @@ public class SessionChannel implements Channel {
 
                 logger.info("Shell started for channel {}: PID={}, command={}", id, shellProcess.pid(), String.join(" ", command));
 
+                // Send colored banner through the PTY channel (bypasses OpenSSH's banner sanitization)
+                if (session.getServer().getBannerProvider() != null) {
+                    try {
+                        byte[] bannerBytes = session.getServer().getBannerProvider().getBanner()
+                                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        waitForWindow(bannerBytes.length);
+                        SshBuffer bannerData = new SshBuffer();
+                        bannerData.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
+                        bannerData.writeUInt32(remoteId);
+                        bannerData.writeByteString(bannerBytes, 0, bannerBytes.length);
+                        session.sendPacket(bannerData);
+                    } catch (Exception e) {
+                        logger.error("Failed to send banner through channel {}: {}", id, e.getMessage());
+                    }
+                }
+
                 // Start pumping data from the shell to the client
                 startPump();   
 
