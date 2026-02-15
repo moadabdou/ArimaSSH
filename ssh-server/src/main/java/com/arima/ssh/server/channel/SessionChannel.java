@@ -40,6 +40,8 @@ public class SessionChannel implements Channel {
     private Process shellProcess;
     private SftpSubsystem sftpSubsystem;
 
+    private Thread pumpThread;
+
 
     @Override
     public void init(ServerSession session, long id, long remoteId, long remoteWindow, long remoteMaxPacket) {
@@ -52,6 +54,10 @@ public class SessionChannel implements Channel {
 
     public long getRemoteMaxPacket() {
         return remoteMaxPacket;
+    }
+
+    public SftpSubsystem getSftpSubsystem() {
+        return sftpSubsystem;
     }
 
     @Override
@@ -287,6 +293,7 @@ public class SessionChannel implements Channel {
                 logger.error("Interrupted while waiting for shell process to exit for channel " + id, e);
             }
         }
+
     }
 
     @Override
@@ -302,6 +309,19 @@ public class SessionChannel implements Channel {
     }
 
     @Override
+    public void handleEof() {
+        // Client says "no more data" → close process stdin so the process can exit
+        if (shellProcess != null) {
+            try {
+                shellProcess.getOutputStream().close();
+                logger.info("Closed stdin for channel {} after receiving EOF", id);
+            } catch (IOException e) {
+                logger.error("Failed to close stdin for channel {}: {}", id, e.getMessage());
+            }
+        }
+    }
+
+    @Override
     public void handleWindowAdjust(long bytesToAdd) {
         synchronized (lock) {
             remoteWindow += bytesToAdd;
@@ -311,7 +331,7 @@ public class SessionChannel implements Channel {
     }
 
     public void startPump() {
-        new Thread( ()->{
+        this.pumpThread = new Thread( ()->{
             try (InputStream shellOut = shellProcess.getInputStream()) {
                 byte[] buffer = new byte[(int)remoteMaxPacket];
                 int read;
@@ -343,17 +363,28 @@ public class SessionChannel implements Channel {
 
                     sendEof();
 
-                    if (!shellProcess.isAlive()) {
+                    // Wait for the process to exit so we can capture its exit code.
+                    // The stream EOF (read returning -1) may arrive before the process
+                    // has fully terminated, so isAlive() alone is racy.
+                    if (shellProcess.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
                         int exitCode = shellProcess.exitValue();
                         sendExitStatus(exitCode);
+                    } else {
+                        logger.warn("Process for channel {} did not exit within timeout, sending exit code 1", id);
+                        sendExitStatus(1);
                     }
 
                     sendClose();
                 } catch (IOException e) {
                     logger.error("Error sending EOF/Close for channel " + id, e);
+                } catch (InterruptedException e) {
+                    logger.error("Interrupted while waiting for process exit for channel " + id, e);
+                    Thread.currentThread().interrupt();
                 }
             }
-        }, "SessionChannel-Pump-" + id).start();
+        }, "SessionChannel-Pump-" + id);
+        
+        pumpThread.start();
 
     }
 

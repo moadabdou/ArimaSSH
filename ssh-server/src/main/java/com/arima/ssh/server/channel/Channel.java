@@ -13,5 +13,6 @@ public interface Channel {
     void handleWindowAdjust(long bytesToAdd);
 
     void handleData(byte[] data);
+    void handleEof();
     void close();
 }

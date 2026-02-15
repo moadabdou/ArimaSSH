@@ -23,6 +23,8 @@ public class ForwardedTcpipChannel implements Channel {
 
     private Socket socket;
 
+    Thread pumpThread;
+
     private final AtomicLong totalBytesReceived = new AtomicLong(0);
     private final AtomicLong totalBytesSent = new AtomicLong(0);
     private final AtomicLong dataChunksReceived = new AtomicLong(0);
@@ -60,6 +62,21 @@ public class ForwardedTcpipChannel implements Channel {
     public boolean handleRequest(String type, SshBuffer buffer){
         logger.warn("[ForwardedTcpip ch#{}] Unsupported request type '{}' (no handler registered)", id, type);
         return false;
+    }
+
+    @Override
+    public void handleEof() {
+        logger.info("[ForwardedTcpip ch#{}] EOF received from client, closing socket output stream", id);
+        if (socket != null && !socket.isOutputShutdown()) {
+            try {
+                socket.shutdownOutput();
+                logger.info("[ForwardedTcpip ch#{}] Socket output stream shutdown successfully", id);
+            } catch (IOException e) {
+                logger.error("[ForwardedTcpip ch#{}] Error shutting down socket output stream: {}", id, e.getMessage(), e);
+            }
+        } else {
+            logger.debug("[ForwardedTcpip ch#{}] Socket already closed or null when handling EOF", id);
+        }
     }
 
     @Override
@@ -113,7 +130,7 @@ public class ForwardedTcpipChannel implements Channel {
             logger.debug("[ForwardedTcpip ch#{}] close() called but already closed, skipping", id);
             return;
         }
-
+        
         closed = true;
         long uptimeMs = System.currentTimeMillis() - createdAtMillis;
 
@@ -155,7 +172,7 @@ public class ForwardedTcpipChannel implements Channel {
     public void startPump() {
         logger.info("[ForwardedTcpip ch#{}] Starting data pump thread (maxPacket={})", id, remoteMaxPacket);
 
-        new Thread( ()->{
+        pumpThread = new Thread( ()->{
             logger.debug("[ForwardedTcpip ch#{}] Pump thread started", id);
             try (InputStream socketIn = socket.getInputStream()) {
                 byte[] buffer = new byte[(int)remoteMaxPacket];
@@ -200,7 +217,9 @@ public class ForwardedTcpipChannel implements Channel {
                 logger.info("[ForwardedTcpip ch#{}] Pump thread TERMINATED (totalBytesSent={}, totalBytesReceived={})", 
                     id, totalBytesSent.get(), totalBytesReceived.get());
             }
-        }, "ForwardedTcpip-Pump-" + id).start();
+        }, "ForwardedTcpip-Pump-" + id);
+
+        pumpThread.start();
     }
 
     private void sendEof() throws IOException {
