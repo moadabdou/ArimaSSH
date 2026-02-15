@@ -14,14 +14,19 @@
   </properties>
 
   <repositories>
-    <repository>
-        <id>jetbrains-intellij-dependencies</id>
-        <url>https://packages.jetbrains.team/maven/p/ij/intellij-dependencies</url>
-    </repository>
-</repositories>
+      <repository>
+          <id>jetbrains-intellij-dependencies</id>
+          <url>https://packages.jetbrains.team/maven/p/ij/intellij-dependencies</url>
+      </repository>
+  </repositories>
 
   <dependencyManagement>
-    <dependencies>
+      <dependencies>
+          <dependency>
+          <groupId>org.jline</groupId>
+          <artifactId>jline</artifactId>
+          <version>3.25.1</version>
+      </dependency>
       <dependency>
         <groupId>org.jetbrains.pty4j</groupId>
         <artifactId>pty4j</artifactId>
