@@ -27,6 +27,8 @@ public class DirectTcpipChannel implements Channel{
     private long originatorPort;
     private Socket socket;
 
+    Thread pumpThread;
+
     // --- Metrics for data exchange tracking ---
     private final AtomicLong totalBytesReceived = new AtomicLong(0);  // client -> target
     private final AtomicLong totalBytesSent = new AtomicLong(0);      // target -> client
@@ -122,6 +124,19 @@ public class DirectTcpipChannel implements Channel{
     }
 
     @Override
+    public void handleEof() {
+        // For direct-tcpip, shut down the output side of the socket
+        if (socket != null && !socket.isOutputShutdown()) {
+            try {
+                socket.shutdownOutput();
+                logger.info("[DirectTcpip ch#{}] Shut down socket output after receiving EOF", id);
+            } catch (IOException e) {
+                logger.error("[DirectTcpip ch#{}] Failed to shut down socket output: {}", id, e.getMessage());
+            }
+        }
+    }
+
+    @Override
     public void close() { 
 
         if (closed) {
@@ -170,7 +185,7 @@ public class DirectTcpipChannel implements Channel{
     public void startPump() {
         logger.info("[DirectTcpip ch#{}] Starting data pump thread (target={}:{}, maxPacket={})", id, targetHost, targetPort, remoteMaxPacket);
 
-        new Thread( ()->{
+        pumpThread = new Thread( ()->{
             logger.debug("[DirectTcpip ch#{}] Pump thread started", id);
             try (InputStream socketIn = socket.getInputStream()) {
                 byte[] buffer = new byte[(int)remoteMaxPacket];
@@ -215,7 +230,9 @@ public class DirectTcpipChannel implements Channel{
                 logger.info("[DirectTcpip ch#{}] Pump thread TERMINATED (totalBytesSent={}, totalBytesReceived={})", 
                     id, totalBytesSent.get(), totalBytesReceived.get());
             }
-        }, "DirectTcpip-Pump-" + id).start();
+        }, "DirectTcpip-Pump-" + id);
+        
+        pumpThread.start();
     }
 
     private void sendEof() throws IOException {
