@@ -204,15 +204,14 @@ public class DirectTcpipChannel implements Channel{
                             break;
                         }
 
-                        SshBuffer sshBuffer = new SshBuffer();
-                        sshBuffer.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
-                        sshBuffer.writeUInt32(remoteId);
-                        sshBuffer.writeByteString(buffer, 0, read);
-
-                        logger.debug("[DirectTcpip ch#{}] DATA_OUT: chunk #{}, {} bytes -> client (totalSent={}, remoteWindow={})", 
-                            id, chunkNum, read, totalSent, remoteWindow);
-
-                        session.sendPacket(sshBuffer);
+                        try {
+                            sendData(buffer, read);
+                            logger.debug("[DirectTcpip ch#{}] Pump: sent chunk #{}, {} bytes to client (totalSent={})", id, chunkNum, read, totalSent);
+                        } catch (IOException e) {
+                            logger.error("[DirectTcpip ch#{}] Pump ERROR sending data to client for chunk #{}: {} ({} bytes)", 
+                                id, chunkNum, e.getMessage(), read, e);
+                            break;
+                        }
                     }
                 }
                 logger.info("[DirectTcpip ch#{}] Pump: target socket EOF reached (stream ended normally)", id);
@@ -235,7 +234,20 @@ public class DirectTcpipChannel implements Channel{
         pumpThread.start();
     }
 
-    private void sendEof() throws IOException {
+    public void sendData(byte[] data, int length) throws IOException {
+        if (closed) {
+            logger.warn("[DirectTcpip ch#{}] Attempt to send data after channel is closed, dropping {} bytes", id, data.length);
+            return;
+        }
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_DATA);
+        buffer.writeUInt32(this.remoteId);
+        buffer.writeByteString(data,0, length);
+        session.sendPacket(buffer);
+        logger.debug("[DirectTcpip ch#{}] Sent {} bytes of data to client (remoteId={})", id, data.length, remoteId);
+    }
+
+    public void sendEof() throws IOException {
         if (eofSent) {
             logger.debug("[DirectTcpip ch#{}] EOF already sent, skipping duplicate", id);
             return;
@@ -249,7 +261,7 @@ public class DirectTcpipChannel implements Channel{
         logger.debug("[DirectTcpip ch#{}] SSH_MSG_CHANNEL_EOF sent", id);
     }
 
-    private void sendClose() throws IOException {
+    public void sendClose() throws IOException {
         if (closeSent) {
             logger.debug("[DirectTcpip ch#{}] CLOSE already sent, skipping duplicate", id);
             return;

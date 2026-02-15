@@ -200,19 +200,13 @@ public class ChannelManager {
         Channel channel = channels.get(recipientId);
 
         if (channel != null) {
-            channel.close();
+
             channels.remove(recipientId);
-
             //send channel close back 
-
-            SshBuffer reply = new SshBuffer();
-            reply.writeByte(SshConstants.SSH_MSG_CHANNEL_CLOSE);
-            reply.writeUInt32(channel.getRemoteId()); // Recipient Channel
-
             try {
-                session.sendPacket(reply);
+                channel.sendClose();
             } catch (Exception e) {
-                logger.error("Failed to send channel close for channel {}: {}", recipientId, e.getMessage());
+                logger.debug("Failed to send channel close reply for channel {} (client likely already disconnected): {}", recipientId, e.getMessage());
             }
 
             logger.info("Closed channel: recipientId={}", recipientId);
