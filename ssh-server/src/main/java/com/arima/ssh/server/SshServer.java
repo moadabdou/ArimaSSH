@@ -9,7 +9,6 @@ import com.arima.ssh.server.auth.PasswordAuthenticator;
 import com.arima.ssh.server.auth.PublicKeyAuthenticator;
 import com.arima.ssh.server.auth.StaticPasswordAuthenticator;
 
-import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -36,6 +35,10 @@ public class SshServer
     private HostKeyProvider hostKeyProvider;
 
 
+
+    private BannerProvider bannerProvider;
+
+
     public void setPasswordAuthenticator(PasswordAuthenticator passwordAuthenticator) {
         this.passwordAuthenticator = passwordAuthenticator;
     }
@@ -58,6 +61,14 @@ public class SshServer
 
     public void setHostKeyProvider(HostKeyProvider hostKeyProvider) {
         this.hostKeyProvider = hostKeyProvider;
+    }
+
+    public BannerProvider getBannerProvider() {
+        return bannerProvider;
+    }
+
+    public void setBannerProvider(BannerProvider bannerProvider) {
+        this.bannerProvider = bannerProvider;
     }
 
     public void start(){
@@ -158,6 +169,7 @@ public class SshServer
         sshServer.setPasswordAuthenticator(authenticator);
         sshServer.setPublicKeyAuthenticator(filePublicKeyAuthenticator);
         sshServer.setHostKeyProvider(hostKeyProvider);
+        sshServer.setBannerProvider(new BannerProvider());
 
         sshServer.start();
 
