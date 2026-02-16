@@ -11,23 +11,16 @@ import java.math.BigInteger;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
-import java.security.SecureRandom;
-
-import javax.crypto.Cipher;
+import java.security.PublicKey;
 
 import com.arima.ssh.common.*;
-import com.arima.ssh.common.crypto.CipherFactory;
 import com.arima.ssh.common.crypto.SshCipher;
 import com.arima.ssh.common.crypto.SshKeyDecoder;
 import com.arima.ssh.common.crypto.SshMac;
 import com.arima.ssh.common.crypto.SshSignatureVerifier;
-import com.arima.ssh.common.crypto.CipherFactory.CipherConstants;
 import com.arima.ssh.common.kex.*;
 import com.arima.ssh.server.auth.PasswordAuthenticator;
 import com.arima.ssh.server.channel.ChannelManager;
-
-import java.security.MessageDigest;
-import java.security.PublicKey;
 
 
 public class ServerSession implements Runnable {
@@ -68,8 +61,8 @@ public class ServerSession implements Runnable {
     private SshCipher currentDecryptor;
     private SshCipher currentEncryptor;
 
-    private SshMac macClient; //C2S
-    private SshMac macServer; //S2C
+    private SshMac inboundMac;
+    private SshMac outboundMac;
 
     private PacketWriter packetWriter;
 
@@ -112,7 +105,7 @@ public class ServerSession implements Runnable {
             logger.debug("Sent version: {}", SERVER_VERSION);
 
             //read client's version string
-            this.clientVersion = readLine(inputStream);
+            this.clientVersion = SshProtocolUtils.readLine(inputStream);
             
             if (!clientVersion.startsWith("SSH-2.0-")) {
                 logger.error("Unsupported protocol version: {}", clientVersion);
@@ -157,46 +150,31 @@ public class ServerSession implements Runnable {
                 return;
             }
 
-            clientKexInitBuffer.readBytes(16); // Skip the 16 random bytes
-
-            String clientKexAlgos = clientKexInitBuffer.readString();
-            String clientHostKeyAlgos = clientKexInitBuffer.readString();
-            String clientCipherAlgoC2S = clientKexInitBuffer.readString();
-            String clientCipherAlgoS2C = clientKexInitBuffer.readString();
-            String clientMacAlgoC2S = clientKexInitBuffer.readString();
-            String clientMacAlgoS2C = clientKexInitBuffer.readString();
-            String clientCompressionAlgoC2S = clientKexInitBuffer.readString();
-            String clientCompressionAlgoS2C = clientKexInitBuffer.readString();
-            String clientLangC2S = clientKexInitBuffer.readString();
-            String clientLangS2C = clientKexInitBuffer.readString();
-            boolean clientFirstKexPacketFollows = clientKexInitBuffer.readByte() != 0;
-            long clientReserved = clientKexInitBuffer.readUInt32();
+            KexInitData clientKexData = KexUtils.parseKexInit(clientKexInitBuffer);
 
             logger.info("Received client's KEXINIT:");
-            logger.info("  Kex Algos: {}", clientKexAlgos);
-            logger.info("  Host Key Algos: {}", clientHostKeyAlgos);
-            logger.info("  Cipher Algos C->S: {}", clientCipherAlgoC2S);
-            logger.info("  Cipher Algos S->C: {}", clientCipherAlgoS2C);
-            logger.info("  MAC Algos C->S: {}", clientMacAlgoC2S);
-            logger.info("  MAC Algos S->C: {}", clientMacAlgoS2C);
-            logger.info("  Compression Algos C->S: {}", clientCompressionAlgoC2S);
-            logger.info("  Compression Algos S->C: {}", clientCompressionAlgoS2C);
-            logger.info("  Lang C->S: {}", clientLangC2S);
-            logger.info("  Lang S->C: {}", clientLangS2C);  
-            logger.info("  First KEX Packet Follows: {}", clientFirstKexPacketFollows);
-            logger.info("  Reserved: {}", clientReserved);
+            logger.info("  Kex Algos: {}", clientKexData.kexAlgos());
+            logger.info("  Host Key Algos: {}", clientKexData.hostKeyAlgos());
+            logger.info("  Cipher Algos C->S: {}", clientKexData.cipherC2S());
+            logger.info("  Cipher Algos S->C: {}", clientKexData.cipherS2C());
+            logger.info("  MAC Algos C->S: {}", clientKexData.macC2S());
+            logger.info("  MAC Algos S->C: {}", clientKexData.macS2C());
+            logger.info("  Compression Algos C->S: {}", clientKexData.compC2S());
+            logger.info("  Compression Algos S->C: {}", clientKexData.compS2C());
+            logger.info("  Lang C->S: {}", clientKexData.langC2S());
+            logger.info("  Lang S->C: {}", clientKexData.langS2C());
+            logger.info("  First KEX Packet Follows: {}", clientKexData.firstKexPacketFollows());
+            logger.info("  Reserved: {}", clientKexData.reserved());
 
 
-            SecurityUtils securityUtils = new SecurityUtils();
-
-            this.kexAlgo = securityUtils.negotiate(clientKexAlgos, SshConstants.PROPOSAL_KEX);
-            this.hostKeyAlgo = securityUtils.negotiate(clientHostKeyAlgos, SshConstants.PROPOSAL_HOST_KEY);
-            this.cipherC2S = securityUtils.negotiate(clientCipherAlgoC2S, SshConstants.PROPOSAL_CIPHER);
-            this.cipherS2C = securityUtils.negotiate(clientCipherAlgoS2C, SshConstants.PROPOSAL_CIPHER);
-            this.macC2S = securityUtils.negotiate(clientMacAlgoC2S, SshConstants.PROPOSAL_MAC);
-            this.macS2C = securityUtils.negotiate(clientMacAlgoS2C, SshConstants.PROPOSAL_MAC);
-            this.compC2S = securityUtils.negotiate(clientCompressionAlgoC2S, SshConstants.PROPOSAL_COMPRESSION);
-            this.compS2C = securityUtils.negotiate(clientCompressionAlgoS2C, SshConstants.PROPOSAL_COMPRESSION);
+            this.kexAlgo = NegotiationUtils.negotiate(clientKexData.kexAlgos(), SshConstants.PROPOSAL_KEX);
+            this.hostKeyAlgo = NegotiationUtils.negotiate(clientKexData.hostKeyAlgos(), SshConstants.PROPOSAL_HOST_KEY);
+            this.cipherC2S = NegotiationUtils.negotiate(clientKexData.cipherC2S(), SshConstants.PROPOSAL_CIPHER);
+            this.cipherS2C = NegotiationUtils.negotiate(clientKexData.cipherS2C(), SshConstants.PROPOSAL_CIPHER);
+            this.macC2S = NegotiationUtils.negotiate(clientKexData.macC2S(), SshConstants.PROPOSAL_MAC);
+            this.macS2C = NegotiationUtils.negotiate(clientKexData.macS2C(), SshConstants.PROPOSAL_MAC);
+            this.compC2S = NegotiationUtils.negotiate(clientKexData.compC2S(), SshConstants.PROPOSAL_COMPRESSION);
+            this.compS2C = NegotiationUtils.negotiate(clientKexData.compS2C(), SshConstants.PROPOSAL_COMPRESSION);
 
             if (kexAlgo == null ||
                 hostKeyAlgo == null ||
@@ -237,7 +215,7 @@ public class ServerSession implements Runnable {
             // init the KEX algorithm with the agreed parameters
 
 
-            this.kex = KEXAlgoFromName(kexAlgo);
+            this.kex = KexUtils.kexAlgoFromName(kexAlgo);
             kex.init();
 
             HostKeyProvider hostKeyProvider = this.server.getHostKeyProvider() != null ? this.server.getHostKeyProvider() : new HostKeyProvider(null);
@@ -342,7 +320,13 @@ public class ServerSession implements Runnable {
             // calculate exchange hash H
             byte[] exchangeHash = null;
             try {
-                exchangeHash = calculateExchangeHash(kex.getHashAlgorithm() , hostKeyBlob, clientE, serverF, sharedSecretK);
+                exchangeHash = KexUtils.calculateExchangeHash(
+                    kex.getHashAlgorithm(),
+                    clientVersion, SERVER_VERSION,
+                    clientKexInitPayload, serverKexInitPayload,
+                    hostKeyBlob, clientE, serverF, sharedSecretK,
+                    kexAlgo, gexMin, gexPreferred, gexMax,
+                    kex.getP(), kex.getG());
             } catch (Exception e) {
                 logger.error("Failed to calculate exchange hash: {}", e.getMessage());
                 close();
@@ -399,50 +383,23 @@ public class ServerSession implements Runnable {
 
             // generate the encryption keys and MAC keys 
 
-            KeyDerivation keyDerivation = null;
+            DerivedKeys keys = null;
             try {
-                keyDerivation = new KeyDerivation(kex.getHashAlgorithm());
+                keys = KexUtils.deriveKeys(
+                    sharedSecretK, exchangeHash, SessionId,
+                    cipherC2S, cipherS2C,
+                    macC2S, macS2C,
+                    kex.getHashAlgorithm(), true);
             } catch (Exception e) {
-                logger.error("Failed to initialize key derivation: {}", e.getMessage());
+                logger.error("Failed to derive keys: {}", e.getMessage());
                 close();
                 return;
             }
 
-
-            CipherConstants cipherC2S_Constants = CipherFactory.getConstants(cipherC2S);
-            CipherConstants cipherS2C_Constants = CipherFactory.getConstants(cipherS2C);
-
-            int macKeySizeC2S = SshMac.getMacSize(macC2S);
-            int macKeySizeS2C = SshMac.getMacSize(macS2C);
-
-
-            byte[] viC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'A', SessionId, cipherC2S_Constants.ivSize);
-            byte[] viS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'B', SessionId, cipherS2C_Constants.ivSize);
-
-            byte[] encKeyC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'C', SessionId, cipherC2S_Constants.keySize);
-            byte[] encKeyS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'D', SessionId, cipherS2C_Constants.keySize);
-
-            byte[] macKeyC2S = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'E', SessionId, macKeySizeC2S); 
-            byte[] macKeyS2C = keyDerivation.calculateKey(sharedSecretK, exchangeHash, (byte) 'F', SessionId, macKeySizeS2C);
-
-            try {
-                this.currentDecryptor = new SshCipher(cipherC2S_Constants.transformation, encKeyC2S, viC2S, Cipher.DECRYPT_MODE);
-                this.currentEncryptor = new SshCipher(cipherS2C_Constants.transformation, encKeyS2C, viS2C, Cipher.ENCRYPT_MODE);
-            } catch (Exception e) {
-                logger.error("Failed to initialize ciphers: {}", e.getMessage());
-                close();
-                return;
-            }
-
-            try {
-                this.macClient = new SshMac(macC2S, macKeyC2S);
-                this.macServer = new SshMac(macS2C, macKeyS2C);
-
-            } catch (Exception e) {
-                logger.error("Failed to initialize MACs: {}", e.getMessage());
-                close();
-                return;
-            }
+            this.currentDecryptor = keys.decryptor();
+            this.currentEncryptor = keys.encryptor();
+            this.inboundMac = keys.inboundMac();
+            this.outboundMac = keys.outboundMac();
 
 
             // read NEWKEYS from client to confirm they are ready to switch to the new keys
@@ -467,10 +424,10 @@ public class ServerSession implements Runnable {
             // activate the encryption for incoming packets
 
             packetReader.setCipher(currentDecryptor);
-            packetReader.setMac(macClient);
+            packetReader.setMac(inboundMac);
 
             packetWriter.setCipher(currentEncryptor);
-            packetWriter.setMac(macServer);
+            packetWriter.setMac(outboundMac);
 
 
             logger.info("tunnel is now encrypted with {} for client->server and {} for server->client", cipherC2S, cipherS2C);
@@ -898,47 +855,9 @@ public class ServerSession implements Runnable {
     }
 
 
-    /**
-     * Reads a line byte-by-byte to avoid over-reading the stream.
-     * Stops at \n. Ignores \r.
-     */
-    private String readLine(InputStream in) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        int b;
-        // Limit to 255 bytes to prevent memory attacks
-        while (sb.length() < 255 && (b = in.read()) != -1) {
-            if (b == '\n') {
-                return sb.toString(); 
-            }
-            if (b != '\r') { // specific SSH requirement: ignore CR, keep only other bytes
-                sb.append((char) b);
-            }
-        }
-        throw new IOException("Stream ended or line too long before version received");
-    }
-
     private void sendKexInit() throws IOException {
 
-        SshBuffer payload = new SshBuffer();
-
-        byte[] randomBytes = new byte[16];
-        new SecureRandom().nextBytes(randomBytes);
-
-        payload.writeByte(SshConstants.SSH_MSG_KEXINIT);
-        payload.writeBytes(randomBytes, 0, randomBytes.length);
-        payload.writeString(SshConstants.PROPOSAL_KEX);
-        payload.writeString(SshConstants.PROPOSAL_HOST_KEY);
-        payload.writeString(SshConstants.PROPOSAL_CIPHER);
-        payload.writeString(SshConstants.PROPOSAL_CIPHER);
-        payload.writeString(SshConstants.PROPOSAL_MAC);
-        payload.writeString(SshConstants.PROPOSAL_MAC);
-        payload.writeString(SshConstants.PROPOSAL_COMPRESSION);
-        payload.writeString(SshConstants.PROPOSAL_COMPRESSION);
-        payload.writeString(SshConstants.PROPOSAL_LANG); 
-        payload.writeString(SshConstants.PROPOSAL_LANG); 
-        payload.writeByte((byte) 0); // first_kex_packet_follows = false
-        payload.writeUInt32(0); // reserved
-
+        SshBuffer payload = KexUtils.buildKexInitPayload();
         this.serverKexInitPayload = payload.getCompactData();
 
         try {
@@ -970,12 +889,7 @@ public class ServerSession implements Runnable {
 
     private void sendDisconnectAndClose(int reasonCode, String message) {
         try {
-            SshBuffer buf = new SshBuffer();
-            buf.writeByte(SshConstants.SSH_MSG_DISCONNECT);
-            buf.writeUInt32(reasonCode);
-            buf.writeString(message);
-            buf.writeString(""); // language tag, not used
-            sendPacket(buf);
+            sendPacket(SshProtocolUtils.buildDisconnectPacket(reasonCode, message));
         } catch (Exception e) {
             logger.error("Failed to send DISCONNECT packet: {}", e.getMessage());
         } finally {
@@ -986,56 +900,6 @@ public class ServerSession implements Runnable {
     public void sendPacket(SshBuffer buffer) throws IOException {
         packetWriter.writePacket(buffer);
     }
-
-    /**
-     * calculate the exchange hash H for the KEXINIT messages, according to RFC 4253 section 8.
-     */
-
-    private byte[] calculateExchangeHash(String HashAlgo, byte[] k_s, byte[] e, byte[] f, BigInteger k) throws Exception {
-
-        MessageDigest hash = MessageDigest.getInstance(HashAlgo);
-
-        SshBuffer buffer = new SshBuffer();
-
-        buffer.writeString(clientVersion);
-        buffer.writeString(SERVER_VERSION);
-        buffer.writeByteString(clientKexInitPayload, 0, clientKexInitPayload.length);
-        buffer.writeByteString(serverKexInitPayload, 0, serverKexInitPayload.length);
-        buffer.writeByteString(k_s, 0, k_s.length);
-
-        if (kexAlgo.startsWith("diffie-hellman-group-exchange")) {
-            // Only for Group Exchange (GEX)
-            buffer.writeUInt32(gexMin);
-            buffer.writeUInt32(gexPreferred);
-            buffer.writeUInt32(gexMax);
-            buffer.writeMpint(kex.getP());
-            buffer.writeMpint(kex.getG());
-        }
-
-        buffer.writeByteString(e, 0, e.length);
-        buffer.writeByteString(f, 0, f.length);
-        buffer.writeMpint(k);
-
-        byte[] exchangeHash = hash.digest(buffer.getCompactData());
-
-        return exchangeHash;
-    }
-
-
-    /**
-     * get the key exchange hash algorithm name from the KEX algorithm name
-     */
-
-    public KeyExchange KEXAlgoFromName(String kexAlgo) {
-        if (kexAlgo.startsWith("diffie-hellman-group14-sha1")) {
-            return new DhGroup14_SHA1();
-        } else if( kexAlgo.startsWith("diffie-hellman-group-exchange-sha256")) {
-            return new DhGroup_SHA256(null, null);
-        }else { 
-            throw new IllegalArgumentException("Unsupported KEX algorithm: " + kexAlgo);
-        }
-    }
-
 
     public ChannelManager getChannelManager() {
         return channelManager;
