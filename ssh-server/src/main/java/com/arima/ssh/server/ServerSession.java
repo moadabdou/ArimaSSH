@@ -354,7 +354,7 @@ public class ServerSession implements Runnable {
 
             // send KEXDH_REPLY message containing host key blob, server public key f, and signature blob
 
-            SshBuffer kexReplyBuf = KexUtils.buildKexDhReply(hostKeyBlob, serverF, signatureBlob);
+            SshBuffer kexReplyBuf = KexUtils.buildKexDhReply(hostKeyBlob, serverF, signatureBlob, isGroupExchange);
 
             try {
                 sendPacket(kexReplyBuf);

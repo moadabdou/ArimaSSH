@@ -6,6 +6,8 @@ import java.io.OutputStream;
 import java.math.BigInteger;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.Signature;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +18,9 @@ import com.arima.ssh.common.PacketWriter;
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.common.SshProtocolUtils;
+import com.arima.ssh.common.crypto.SignatureUtils;
 import com.arima.ssh.common.crypto.SshCipher;
+import com.arima.ssh.common.crypto.SshKeyDecoder;
 import com.arima.ssh.common.crypto.SshMac;
 import com.arima.ssh.common.kex.DerivedKeys;
 import com.arima.ssh.common.kex.KexInitData;
@@ -248,7 +252,10 @@ public class ClientSession {
 
             SshBuffer kexReplyBuffer = packetReader.readPacket();
             byte kexReplyType = kexReplyBuffer.readByte();
-            if (kexReplyType != SshConstants.SSH_MSG_KEXDH_REPLY) {
+            if (!(
+                 (isGroupExchange && kexReplyType == SshConstants.SSH_MSG_KEXDH_GEX_REPLY) ||
+                 (!isGroupExchange && kexReplyType == SshConstants.SSH_MSG_KEXDH_REPLY)
+            )) {
                 throw new IOException("Expected SSH_MSG_KEXDH_REPLY, but got message type: " + kexReplyType);
             }
 
@@ -471,6 +478,98 @@ public class ClientSession {
             throw new IOException("Unexpected message type during authentication: " + responseType);
         }
 
+    }
+
+    public boolean authenticateWithPublicKey(KeyPair keyPair) throws Exception{
+
+
+        //check if the server accepts this key for authentication
+
+        String sshAlgo = SshKeyDecoder.getSshKeyType(keyPair.getPublic());
+
+        byte[] publicKeyBlob = SshKeyDecoder.encodePublicKey(keyPair.getPublic());
+
+        SshBuffer authRequest = buildPublicKeyAuthRequest(sshAlgo, publicKeyBlob, null);
+
+        sendPacket(authRequest);
+
+        // check server's response
+
+        SshBuffer responseBuffer = packetReader.readPacket();
+        byte responseType = responseBuffer.readByte();
+
+        if(responseType == SshConstants.SSH_MSG_USERAUTH_FAILURE) {
+            String methods = responseBuffer.readString();
+            logger.info("Server does not accept this public key for authentication, supported methods are: {}", methods);
+            return false;
+        } else if (responseType != SshConstants.SSH_MSG_USERAUTH_PK_OK) {
+            throw new IOException("Unexpected message type during public key authentication: " + responseType);
+        }
+
+        // server accepted the key, now we need to send the signature
+
+        SshBuffer signBuffer = new SshBuffer();
+        signBuffer.writeByteString(this.SessionId, 0 , this.SessionId.length); // 1. Session ID (string)
+        signBuffer.writeByte(SshConstants.SSH_MSG_USERAUTH_REQUEST); // 2. Msg ID
+        signBuffer.writeString(client.getUsername());      // 3. Username
+        signBuffer.writeString("ssh-connection");   // 4. Service ("ssh-connection")
+        signBuffer.writeString("publickey"); // 5. Method
+        signBuffer.writeBoolean(true);     // 6. Has Signature (TRUE)
+        signBuffer.writeString(sshAlgo); // 7. Algo Name
+        signBuffer.writeByteString(publicKeyBlob, 0, publicKeyBlob.length); // 8. The Key Blob (string)
+
+        byte[] dataToSign = signBuffer.getCompactData();
+
+        // sign the data with the client's private key
+        java.security.Signature signature = java.security.Signature.getInstance(SignatureUtils.mapSshAlgoToJava(sshAlgo));
+        signature.initSign(keyPair.getPrivate());
+        signature.update(dataToSign);
+        byte[] rawSignature = signature.sign();
+
+        // build the signature blob according to RFC 8332 (string containing algo name + string containing raw signature)
+
+        SshBuffer signatureBlobBuffer = new SshBuffer();
+        signatureBlobBuffer.writeString(sshAlgo);
+        signatureBlobBuffer.writeByteString(rawSignature, 0, rawSignature.length);
+        byte[] signatureBlob = signatureBlobBuffer.getCompactData();
+
+        // send the authentication request with the signature
+        SshBuffer authRequestWithSig = buildPublicKeyAuthRequest(sshAlgo, publicKeyBlob, signatureBlob);
+        sendPacket(authRequestWithSig);
+
+        // check server's response
+        SshBuffer finalResponseBuffer = packetReader.readPacket();
+        byte finalResponseType = finalResponseBuffer.readByte();
+
+        if (finalResponseType == SshConstants.SSH_MSG_USERAUTH_SUCCESS) {
+            logger.info("Public key authentication successful!");
+            return true;
+        } else if (finalResponseType == SshConstants.SSH_MSG_USERAUTH_FAILURE) {
+            String methods = finalResponseBuffer.readString();
+            logger.info("Public key authentication failed, supported methods are: {}", methods);
+            return false;
+        } else {
+            throw new IOException("Unexpected message type during authentication: " + finalResponseType);
+        }
+
+    }
+
+    private SshBuffer buildPublicKeyAuthRequest(String algoName, byte[] publicKeyBlob, byte[] signature) {
+
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_USERAUTH_REQUEST);
+        buffer.writeString(client.getUsername());
+        buffer.writeString("ssh-connection");
+        buffer.writeString("publickey");
+        buffer.writeBoolean(signature != null); // indicate that we are including a signature
+        buffer.writeString(algoName);
+        buffer.writeByteString(publicKeyBlob, 0, publicKeyBlob.length);
+
+        if (signature != null){
+            buffer.writeByteString(signature, 0, signature.length);
+        }
+
+        return buffer;
     }
 
     private void sendKexInit() throws IOException {

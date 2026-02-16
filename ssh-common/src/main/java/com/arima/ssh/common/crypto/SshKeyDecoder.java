@@ -45,4 +45,42 @@ public class SshKeyDecoder {
         System.arraycopy(keyData, 0, encoded, header.length, keyData.length);
         return encoded;
     }
+
+    public static String getSshKeyType(PublicKey key) {
+        String algo = key.getAlgorithm();
+
+        switch (algo) {
+            case "RSA":
+                return "ssh-rsa";
+            case "Ed25519":
+                return "ssh-ed25519";
+            default:
+                throw new IllegalArgumentException("Unsupported Java Key Algorithm: " + algo);
+        }
+
+    }
+
+    public static byte[] encodePublicKey(PublicKey key) throws Exception {
+        String sshAlgo = getSshKeyType(key);
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeString(sshAlgo);
+
+        if (key instanceof java.security.interfaces.RSAPublicKey) {
+            java.security.interfaces.RSAPublicKey rsaKey = (java.security.interfaces.RSAPublicKey) key;
+            buffer.writeMpint(rsaKey.getPublicExponent());
+            buffer.writeMpint(rsaKey.getModulus());
+        } else if (key instanceof java.security.interfaces.EdECPublicKey) {
+            // For Ed25519, the public key is just the raw 32 bytes
+            byte[] keyData = key.getEncoded();
+            // Extract the raw 32 bytes from the X.509 encoding
+            byte[] rawKeyData = new byte[32];
+            System.arraycopy(keyData, keyData.length - 32, rawKeyData, 0, 32);
+            buffer.writeByteString(rawKeyData, 0, rawKeyData.length);
+        } else {
+            throw new IllegalArgumentException("Unsupported PublicKey type: " + key.getClass().getName());
+        }
+
+        return buffer.getCompactData();
+    }
+
 }

@@ -26,8 +26,19 @@
     </dependency>
 
     <dependency>
+        <groupId>org.bouncycastle</groupId>
+        <artifactId>bcpkix-jdk18on</artifactId>
+        <version>1.78.1</version>
+    </dependency>
+
+    <dependency>
         <groupId>org.jline</groupId>
         <artifactId>jline</artifactId>
+    </dependency>
+
+    <dependency>
+        <groupId>info.picocli</groupId>
+        <artifactId>picocli</artifactId>
     </dependency>
 
     <dependency>
@@ -79,8 +90,13 @@
             <configuration>
                 <mainClass>com.arima.ssh.client.SshClient</mainClass>
                 <arguments>
-                    <argument>moadabdou@localhost:2222</argument>
+                    <argument>moadabdou@localhost</argument>
+                    <argument>-p</argument>
+                    <argument>2222</argument>
+                    <argument>-i</argument>
+                    <argument>/home/moadabdou/.arima_ssh/arima_kana_key</argument>
                 </arguments>
+
             </configuration>
           </plugin>
       </plugins>

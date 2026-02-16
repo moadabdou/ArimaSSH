@@ -129,16 +129,18 @@ public final class KexUtils {
     }
 
     /**
-     * Builds a SSH_MSG_KEX_DH_REPLY packet (RFC 4253 §8).
+     * Builds a SSH_MSG_KEX_DH_REPLY packet (RFC 4253 §8) or
+     * SSH_MSG_KEX_DH_GEX_REPLY packet (RFC 4419 §3) for group exchange.
      * @param hostKeyBlob the server's public host key blob (K_S)
      * @param f the server's DH public value as a byte array
      * @param signatureBlob the signature blob (contains the signature of H using the host key)
+     * @param isGroupExchange true if this is a group exchange (GEX), false for regular DH
      * @return an SshBuffer ready to be sent
     */
 
-    public static SshBuffer buildKexDhReply(byte[] hostKeyBlob, byte[] f, byte[] signatureBlob) {
+    public static SshBuffer buildKexDhReply(byte[] hostKeyBlob, byte[] f, byte[] signatureBlob, boolean isGroupExchange) {
         SshBuffer buffer = new SshBuffer();
-        buffer.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
+        buffer.writeByte(isGroupExchange ? SshConstants.SSH_MSG_KEXDH_GEX_REPLY : SshConstants.SSH_MSG_KEXDH_REPLY);
         buffer.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
         buffer.writeByteString(f, 0, f.length);
         buffer.writeByteString(signatureBlob, 0, signatureBlob.length);
