@@ -59,4 +59,14 @@ public class DhGroup14_SHA1 implements KeyExchange, DhGroup14 {
         return G;   
     }
 
+    @Override
+    public void setP(BigInteger p) {
+        throw new UnsupportedOperationException("Custom p parameter is not supported in this implementation");
+    }
+
+    @Override
+    public void setG(BigInteger g) {
+        throw new UnsupportedOperationException("Custom g parameter is not supported in this implementation");
+    }
+
 }

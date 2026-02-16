@@ -6,8 +6,8 @@ import java.security.SecureRandom;
 public class DhGroup_SHA256 implements KeyExchange, DhGroup14 {
 
     
-    private static final BigInteger P = G14_P;
-    private static final BigInteger G = G14_G;
+    private BigInteger P = G14_P;
+    private BigInteger G = G14_G;
 
     private BigInteger x; // Private Key (Random)
     private BigInteger e; // Public Key = g^x mod p
@@ -73,5 +73,14 @@ public class DhGroup_SHA256 implements KeyExchange, DhGroup14 {
         return G;   
     }
 
+    @Override
+    public void setP(BigInteger p) {
+        this.P = p;
+    }
+
+    @Override
+    public void setG(BigInteger g) {
+        this.G = g;
+    }
     
 }

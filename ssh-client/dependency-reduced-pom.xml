@@ -30,6 +30,21 @@
           </execution>
         </executions>
       </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.1.0</version>
+        <configuration>
+          <mainClass>com.arima.ssh.client.SshClient</mainClass>
+          <arguments>
+            <argument>moadabdou@localhost</argument>
+            <argument>-p</argument>
+            <argument>2222</argument>
+            <argument>-i</argument>
+            <argument>/home/moadabdou/.arima_ssh/arima_kana_key</argument>
+          </arguments>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
   <dependencies>

@@ -1,25 +1,20 @@
 package com.arima.ssh.server;
 
 import java.io.File;
-import java.io.FileReader;
 import java.io.FileWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.*;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.RSAPublicKeySpec;
 
-
-import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
-import org.bouncycastle.openssl.PEMKeyPair;
-import org.bouncycastle.openssl.PEMParser;
-import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.slf4j.LoggerFactory;
 
 import java.security.interfaces.RSAPrivateKey;
 
 import com.arima.ssh.common.SshBuffer;
+import com.arima.ssh.common.crypto.PemUtils;
+import com.arima.ssh.common.kex.KexUtils;
 
 
 public class HostKeyProvider {
@@ -43,50 +38,13 @@ public class HostKeyProvider {
     public void init() throws NoSuchAlgorithmException {
 
         if (Files.exists(hostKeyPath)) {
-            this.hostKeyPair = readPemFile();
+            this.hostKeyPair = PemUtils.readPemFile(hostKeyPath);
         } else {
             this.hostKeyPair = generateAndSave();
         }
         
     }
 
-
-    private KeyPair readPemFile() {
-
-        try (
-            FileReader reader = new FileReader(hostKeyPath.toFile());
-            PEMParser pemParser = new PEMParser(reader)
-        ) {
-
-            Object object = pemParser.readObject();
-
-            JcaPEMKeyConverter converter = new JcaPEMKeyConverter();
-
-            if (object instanceof PEMKeyPair) {
-                // PKCS#1 (Legacy "BEGIN RSA PRIVATE KEY")
-                logger.info("Loading legacy PKCS#1 host key...");
-                return converter.getKeyPair((PEMKeyPair) object);
-            } 
-            else if (object instanceof PrivateKeyInfo) {
-                // PKCS#8 (Modern "BEGIN PRIVATE KEY")
-                logger.info("Loading modern PKCS#8 host key...");
-                PrivateKey privateKey = converter.getPrivateKey((PrivateKeyInfo) object);
-                RSAPrivateKey rsaPrivateKey = (RSAPrivateKey) privateKey;
-                java.security.KeyFactory keyFactory = java.security.KeyFactory.getInstance("RSA");
-                RSAPublicKey publicKey = (RSAPublicKey) keyFactory.generatePublic(
-                    new RSAPublicKeySpec(rsaPrivateKey.getModulus(), java.math.BigInteger.valueOf(65537))
-                );
-                return new KeyPair(publicKey, privateKey);
-            } 
-
-            else {
-                throw new IllegalArgumentException("Unknown PEM object type: " + object.getClass().getName());
-            }
-
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to load host key from " + hostKeyPath, e);
-        }
-    }
 
     private KeyPair generateAndSave() {
 
@@ -140,10 +98,9 @@ public class HostKeyProvider {
 
     public byte[] sign(byte[] data, String algoName) throws NoSuchAlgorithmException, InvalidKeyException, SignatureException {
 
-        Signature signature = Signature.getInstance(mapSshToJava(algoName));
+        Signature signature = Signature.getInstance(KexUtils.mapSshToJava(algoName));
         signature.initSign((RSAPrivateKey) hostKeyPair.getPrivate());
         signature.update(data);
-
         byte[] rawSignature = signature.sign();
 
 
@@ -158,21 +115,5 @@ public class HostKeyProvider {
 
         return buffer.getCompactData();
     }    
-
-    // mapper from SSH signature algorithm names to Java Signature algorithm names, for use in the sign() method above
-
-    private String mapSshToJava(String sshName) {
-        switch (sshName) {
-            case "ssh-rsa":
-                return "SHA1withRSA";
-            case "rsa-sha2-256":
-                return "SHA256withRSA";
-            case "rsa-sha2-512":
-                return "SHA512withRSA";
-            default:
-                throw new IllegalArgumentException("Unsupported signature algorithm: " + sshName);
-        }
-    }
-
 
 }
