@@ -3,15 +3,16 @@ package com.arima.ssh.server.channel;
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.server.ServerSession;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.slf4j.Logger;
 
 import org.slf4j.LoggerFactory;
 
 public class ChannelManager {
 
-    private final Map<Long, Channel> channels = new HashMap<>();
+    private final Map<Long, Channel> channels = new ConcurrentHashMap<>();
     private int nextChannelId = 0;
     private final ServerSession session;
     private final Logger logger = LoggerFactory.getLogger(ServerSession.class);
