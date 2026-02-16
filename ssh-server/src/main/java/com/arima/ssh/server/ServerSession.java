@@ -138,10 +138,7 @@ public class ServerSession implements Runnable {
                 return;
             }
 
-            logger.info("Received client's KEXINIT packet, length: {}", clientKexInitBuffer.wpos());
-
             this.clientKexInitPayload = clientKexInitBuffer.getCompactData();
-
 
             byte kexInitType = clientKexInitBuffer.readByte();
             if (kexInitType != SshConstants.SSH_MSG_KEXINIT) {
@@ -149,6 +146,8 @@ public class ServerSession implements Runnable {
                 close();
                 return;
             }
+
+            logger.info("Received client's KEXINIT packet, length: {}", clientKexInitBuffer.wpos());
 
             KexInitData clientKexData = KexUtils.parseKexInit(clientKexInitBuffer);
 
@@ -285,14 +284,20 @@ public class ServerSession implements Runnable {
             }
 
 
-            byte kexDhInitType = kexDhBuffer.readByte();
+            byte kexDhInitType = isGroupExchange ? kexDhBuffer.readByte() : kexDhType;
 
 
             if (!(
                  (isGroupExchange && kexDhInitType == SshConstants.SSH_MSG_KEXDH_GEX_INIT) ||
                  (!isGroupExchange && kexDhInitType == SshConstants.SSH_MSG_KEXDH_INIT)
             )){
-                logger.error("Expected KEXDH_INIT (30) or KEXDH_GEX_INIT (32), but got message type: {}", kexDhInitType);
+                
+                if (isGroupExchange) {
+                    logger.error("Expected SSH_MSG_KEXDH_GEX_INIT (32), but got message type: {}", kexDhInitType);
+                } else {
+                    logger.error("Expected SSH_MSG_KEXDH_INIT (30), but got message type: {}", kexDhInitType);
+                }
+
                 close();
                 return;
             }
@@ -333,7 +338,9 @@ public class ServerSession implements Runnable {
                 return;
             }
 
-            this.SessionId = exchangeHash; // For the first key exchange, the session ID is the exchange hash
+            if (SessionId == null) {
+                this.SessionId = exchangeHash; // For the first key exchange, the session ID is the exchange hash
+            }
 
             // sign the exchange hash with the host private key to create the signature blob
             byte[] signatureBlob = null;
@@ -347,11 +354,7 @@ public class ServerSession implements Runnable {
 
             // send KEXDH_REPLY message containing host key blob, server public key f, and signature blob
 
-            SshBuffer kexReplyBuf = new SshBuffer();
-            kexReplyBuf.writeByte(isGroupExchange? SshConstants.SSH_MSG_KEXDH_GEX_REPLY : SshConstants.SSH_MSG_KEXDH_REPLY);
-            kexReplyBuf.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
-            kexReplyBuf.writeByteString(serverF, 0, serverF.length);
-            kexReplyBuf.writeByteString(signatureBlob, 0, signatureBlob.length);
+            SshBuffer kexReplyBuf = KexUtils.buildKexDhReply(hostKeyBlob, serverF, signatureBlob);
 
             try {
                 sendPacket(kexReplyBuf);

@@ -1,8 +1,11 @@
 package com.arima.ssh.common.kex;
 
 import java.math.BigInteger;
+import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.security.Signature;
+import java.security.spec.RSAPublicKeySpec;
 
 import javax.crypto.Cipher;
 
@@ -39,6 +42,28 @@ public final class KexUtils {
         }
     }
 
+    /**
+     * map ssh signature algorithm name (e.g. "ssh-rsa") to Java signature algorithm name (e.g. "SHA256withRSA")
+     * @param sshName the SSH signature algorithm name
+     * @return the corresponding Java signature algorithm name
+     * @throws IllegalArgumentException if the SSH algorithm name is not recognized
+     */
+
+
+    public static String mapSshToJava(String sshName) {
+        switch (sshName) {
+            case "ssh-rsa":
+                return "SHA1withRSA";
+            case "rsa-sha2-256":
+                return "SHA256withRSA";
+            case "rsa-sha2-512":
+                return "SHA512withRSA";
+            default:
+                throw new IllegalArgumentException("Unsupported signature algorithm: " + sshName);
+        }   
+    }
+
+
 
     /**
      * Builds a SSH_MSG_KEXINIT payload (RFC 4253 §7.1).
@@ -69,6 +94,88 @@ public final class KexUtils {
         payload.writeUInt32(0);        // reserved
 
         return payload;
+    }
+
+
+    /**
+     * Builds a SSH_MSG_KEX_DH_GEX_REQUEST packet (RFC 4419 §2.1).
+     * @param gexMin minimum acceptable group size in bits (e.g. 2048)
+     * @param gexPreferred preferred group size in bits (e.g. 4096
+     * @param gexMax maximum acceptable group size in bits (e.g. 8192)
+     * @return an SshBuffer ready to be sent
+     */
+
+
+    public static SshBuffer buildGexRequest(long gexMin, long gexPreferred, long gexMax) {
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_KEXDH_GEX_REQUEST);
+        buffer.writeUInt32(gexMin);
+        buffer.writeUInt32(gexPreferred);
+        buffer.writeUInt32(gexMax);
+        return buffer;
+    }
+
+    /**
+     * Builds a SSH_MSG_KEX_DH_INIT packet (RFC 4253 §8).
+     * @param e the client's DH public value as a byte array
+     * @return an SshBuffer ready to be sent
+    */
+
+    public static SshBuffer buildKexDhInit(byte[] e,boolean isGroupExchange) {
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(isGroupExchange ? SshConstants.SSH_MSG_KEXDH_GEX_INIT : SshConstants.SSH_MSG_KEXDH_INIT);
+        buffer.writeByteString(e, 0, e.length);
+        return buffer;
+    }
+
+    /**
+     * Builds a SSH_MSG_KEX_DH_REPLY packet (RFC 4253 §8).
+     * @param hostKeyBlob the server's public host key blob (K_S)
+     * @param f the server's DH public value as a byte array
+     * @param signatureBlob the signature blob (contains the signature of H using the host key)
+     * @return an SshBuffer ready to be sent
+    */
+
+    public static SshBuffer buildKexDhReply(byte[] hostKeyBlob, byte[] f, byte[] signatureBlob) {
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_KEXDH_REPLY);
+        buffer.writeByteString(hostKeyBlob, 0, hostKeyBlob.length);
+        buffer.writeByteString(f, 0, f.length);
+        buffer.writeByteString(signatureBlob, 0, signatureBlob.length);
+        return buffer;
+    }
+
+    /**
+     * verify server's signature blob against the exchange hash H using the host public key from the host key blob
+     * @param hostKeyBlob the server's public host key blob (K_S)
+     * @param signatureBlob the signature blob (contains the signature of H using the host key)
+     * @param H the exchange hash to verify
+     * @return true if the signature is valid, false otherwise
+     * @throws Exception if any error occurs during signature verification (e.g. unsupported key type
+    */
+
+    public static boolean verifyServerSignature(byte[] hostKeyBlob, byte[] signatureBlob, byte[] H) throws Exception {
+        SshBuffer hostKeyBuf = new SshBuffer(hostKeyBlob);
+        hostKeyBuf.readString(); // skip the key type (e.g. "ssh-rsa")
+        BigInteger e = hostKeyBuf.readMpint();
+        BigInteger n = hostKeyBuf.readMpint();
+
+        SshBuffer sigBuf = new SshBuffer(signatureBlob);
+        String sigAlgo = sigBuf.readString();
+        byte[] sigData = sigBuf.readByteString();
+
+        
+        Signature signature = Signature.getInstance(KexUtils.mapSshToJava(sigAlgo));
+
+        RSAPublicKeySpec keySpec = new RSAPublicKeySpec(n, e);
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+
+        signature.initVerify(keyFactory.generatePublic(keySpec));
+
+        signature.update(H);
+
+        return signature.verify(sigData);
+
     }
 
 

@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.security.interfaces.RSAPrivateKey;
 
 import com.arima.ssh.common.SshBuffer;
+import com.arima.ssh.common.kex.KexUtils;
 
 
 public class HostKeyProvider {
@@ -140,10 +141,9 @@ public class HostKeyProvider {
 
     public byte[] sign(byte[] data, String algoName) throws NoSuchAlgorithmException, InvalidKeyException, SignatureException {
 
-        Signature signature = Signature.getInstance(mapSshToJava(algoName));
+        Signature signature = Signature.getInstance(KexUtils.mapSshToJava(algoName));
         signature.initSign((RSAPrivateKey) hostKeyPair.getPrivate());
         signature.update(data);
-
         byte[] rawSignature = signature.sign();
 
 
@@ -158,21 +158,5 @@ public class HostKeyProvider {
 
         return buffer.getCompactData();
     }    
-
-    // mapper from SSH signature algorithm names to Java Signature algorithm names, for use in the sign() method above
-
-    private String mapSshToJava(String sshName) {
-        switch (sshName) {
-            case "ssh-rsa":
-                return "SHA1withRSA";
-            case "rsa-sha2-256":
-                return "SHA256withRSA";
-            case "rsa-sha2-512":
-                return "SHA512withRSA";
-            default:
-                throw new IllegalArgumentException("Unsupported signature algorithm: " + sshName);
-        }
-    }
-
 
 }

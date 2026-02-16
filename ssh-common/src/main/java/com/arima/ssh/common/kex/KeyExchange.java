@@ -12,6 +12,9 @@ public interface KeyExchange {
     BigInteger getP();
     BigInteger getG();
 
+    void setP(BigInteger p);
+    void setG(BigInteger g);
+
     /**
      * @return My Public Key (e) to send to the other party.
      */
