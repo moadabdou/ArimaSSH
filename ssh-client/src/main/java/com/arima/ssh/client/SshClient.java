@@ -4,6 +4,8 @@ package com.arima.ssh.client;
 import java.net.InetAddress;
 import java.net.Socket;
 
+import org.jline.reader.LineReader;
+import org.jline.reader.LineReaderBuilder;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.NonBlockingReader;
@@ -24,6 +26,8 @@ public class SshClient {
     private String host;
     private int port;
 
+    private String authMethods;
+
     public SshClient(String username, String host, int port) {
         this.username = username;
         this.host = host;
@@ -42,6 +46,14 @@ public class SshClient {
         return host;
     }
 
+    public int getPort() {
+        return port;
+    }
+
+    public String getAuthMethods() {
+        return authMethods;
+    }
+
     public void connect() throws Exception {
 
         InetAddress address = InetAddress.getByName(host);
@@ -55,11 +67,9 @@ public class SshClient {
 
         logger.info("SSH client setup complete. Ready to authenticate and open channels.");
 
-        String authMethods = session.requestAuthMethods();
+        authMethods = session.requestAuthMethods();
 
         logger.info("Server supports the following authentication methods: {}", authMethods);
-
-        try{ Thread.sleep(5000); }catch(Exception e){}
  
     }
 
@@ -67,14 +77,64 @@ public class SshClient {
 
         System.out.print(new DefaultBanner().loadBanner());
 
-        SshClient client = new SshClient("moadabdou","localhost", 2222);
+        // get username, host, and port from command line arguments :  user@host:port 
 
-        try {
-            client.connect();
-        } catch (Exception e) {
-            logger.error("Failed to connect: {}", e.getMessage());
+        if (args.length < 1) {
+            System.err.println("Usage: java SshClient <username@host:port>");
+            return;
         }
 
+        String[] parts = args[0].split("@");
+        if (parts.length != 2) {
+            System.err.println("Invalid format. Expected: username@host:port");
+            return;
+        }
+
+        String username = parts[0];
+        String[] hostParts = parts[1].split(":");
+        
+        // if port is not specified, default to 2222
+        String host = hostParts[0];
+        int port = 2222; // default port
+
+        if (hostParts.length > 1) {
+            try {
+                port = Integer.parseInt(hostParts[1]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid port number. Expected an integer. Using default port 2222.");
+            }
+        }
+
+        try (Terminal terminal = TerminalBuilder.builder().system(true).build()) {
+
+
+            SshClient client = new SshClient(username, host, port);
+            client.connect();
+
+            boolean authenticated = false;
+            LineReader lineReader = LineReaderBuilder.builder().terminal(terminal).build();
+
+            while (!authenticated) {
+
+                String password = lineReader.readLine("password: ", '*');
+                
+                if (client.getSession().authenticateWithPassword(password)) {
+                    authenticated = true;
+                } else {
+                    System.out.println("Permission denied, please try again.");
+                }
+                
+            }
+
+            System.out.println("Logged in! (Shell coming soon...)");
+  
+            while(true) Thread.sleep(1000);
+
+        }catch (Exception e) {
+
+            logger.error("An error occurred: {}", e.getMessage(), e);
+
+        }
 
     }
 }

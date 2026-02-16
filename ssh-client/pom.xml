@@ -78,6 +78,9 @@
             <version>3.1.0</version>
             <configuration>
                 <mainClass>com.arima.ssh.client.SshClient</mainClass>
+                <arguments>
+                    <argument>moadabdou@localhost:2222</argument>
+                </arguments>
             </configuration>
           </plugin>
       </plugins>

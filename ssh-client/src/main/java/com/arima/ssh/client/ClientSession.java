@@ -432,6 +432,46 @@ public class ClientSession {
 
     }
 
+    public boolean authenticateWithPassword(String password) throws IOException {
+
+        logger.info("Attempting password authentication for user '{}'", client.getUsername());
+
+        SshBuffer authRequest = new SshBuffer();
+        authRequest.writeByte(SshConstants.SSH_MSG_USERAUTH_REQUEST);
+        authRequest.writeString(client.getUsername());
+        authRequest.writeString("ssh-connection");
+        authRequest.writeString("password");
+        authRequest.writeBoolean(false); // no password change request
+        authRequest.writeString(password);
+
+        try {
+            sendPacket(authRequest);
+        } catch (Exception e) {
+            throw new IOException("Failed to send password authentication request: " + e.getMessage(), e);
+        }
+
+        SshBuffer responseBuffer = null;
+
+        try {
+            responseBuffer = packetReader.readPacket();
+        } catch (Exception e) {
+            throw new IOException("Failed to read authentication response: " + e.getMessage(), e);
+        }
+
+        byte responseType = responseBuffer.readByte();
+
+        if (responseType == SshConstants.SSH_MSG_USERAUTH_SUCCESS) {
+            logger.info("Password authentication successful!");
+            return true;
+        } else if (responseType == SshConstants.SSH_MSG_USERAUTH_FAILURE) {
+            String methods = responseBuffer.readString();
+            logger.info("Password authentication failed, supported methods are: {}", methods);
+            return false;
+        } else {
+            throw new IOException("Unexpected message type during authentication: " + responseType);
+        }
+
+    }
 
     private void sendKexInit() throws IOException {
 
