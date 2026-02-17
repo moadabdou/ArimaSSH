@@ -64,7 +64,7 @@ public class ForwardingManager {
 
                 ForwardedTcpipChannel channel = new ForwardedTcpipChannel(incomingSocket);
                 
-                long myId = session.getChannelManager().registerChannel(channel);;
+                long myId = session.getChannelManager().registerChannel(channel);
                 
 
                 SshBuffer buffer = new SshBuffer();

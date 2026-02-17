@@ -14,16 +14,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.PublicKey;
 
 import com.arima.ssh.common.*;
+import com.arima.ssh.common.channel.Session;
 import com.arima.ssh.common.crypto.SshCipher;
 import com.arima.ssh.common.crypto.SshKeyDecoder;
 import com.arima.ssh.common.crypto.SshMac;
 import com.arima.ssh.common.crypto.SshSignatureVerifier;
 import com.arima.ssh.common.kex.*;
 import com.arima.ssh.server.auth.PasswordAuthenticator;
-import com.arima.ssh.server.channel.ChannelManager;
+import com.arima.ssh.server.channel.ServerChannelManager;
 
 
-public class ServerSession implements Runnable {
+public class ServerSession implements Runnable, Session {
 
     private static final Logger logger = LoggerFactory.getLogger(ServerSession.class);
 
@@ -33,7 +34,7 @@ public class ServerSession implements Runnable {
     private final Socket clientSocket;
     private final SshServer server;
 
-    private ChannelManager channelManager;
+    private ServerChannelManager channelManager;
     private ForwardingManager forwardingManager;
 
     private InputStream inputStream;
@@ -75,7 +76,7 @@ public class ServerSession implements Runnable {
     public ServerSession(Socket clientSocket, SshServer server) {
         this.clientSocket = clientSocket;
         this.server = server;
-        this.channelManager = new ChannelManager(this);
+        this.channelManager = new ServerChannelManager(this);
         this.forwardingManager = new ForwardingManager(this);
     }
 
@@ -904,7 +905,7 @@ public class ServerSession implements Runnable {
         packetWriter.writePacket(buffer);
     }
 
-    public ChannelManager getChannelManager() {
+    public ServerChannelManager getChannelManager() {
         return channelManager;
     }
 

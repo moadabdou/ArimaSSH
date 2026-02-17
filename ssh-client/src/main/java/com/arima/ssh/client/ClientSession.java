@@ -4,19 +4,25 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigInteger;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
+import java.util.Map;
 
+import org.jline.terminal.Terminal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.arima.ssh.client.channel.ClientSessionManager;
+import com.arima.ssh.client.channel.SessionChannel;
 import com.arima.ssh.common.NegotiationUtils;
 import com.arima.ssh.common.PacketReader;
 import com.arima.ssh.common.PacketWriter;
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.common.SshProtocolUtils;
+import com.arima.ssh.common.channel.Session;
 import com.arima.ssh.common.crypto.SignatureUtils;
 import com.arima.ssh.common.crypto.SshCipher;
 import com.arima.ssh.common.crypto.SshKeyDecoder;
@@ -26,14 +32,18 @@ import com.arima.ssh.common.kex.KexInitData;
 import com.arima.ssh.common.kex.KexUtils;
 import com.arima.ssh.common.kex.KeyExchange;
 
-public class ClientSession {
+public class ClientSession implements Session {
 
     private static final String CLIENT_VERSION = "SSH-2.0-ArimaSSHClient_0.1";
 
     private static final Logger logger = LoggerFactory.getLogger(ClientSession.class);
 
-    private final Socket serverSocket;
+    private final String host;
+    private final int port;
+    private Socket serverSocket;
     private final SshClient client;
+
+    private final Terminal terminal;
    
     private InputStream inputStream;
     private OutputStream outputStream;
@@ -72,28 +82,56 @@ public class ClientSession {
     private long gexPreferred;
     private long gexMax;
 
+    private ClientSessionManager channelManager;
 
-    public ClientSession(Socket serverSocket, SshClient client) {
-        this.serverSocket = serverSocket;
+
+    public ClientSession(String host, int port , SshClient client, Terminal terminal) {
+        this.host = host;
+        this.port = port;
         this.client = client;
+        this.terminal = terminal;
+        this.channelManager = new ClientSessionManager(this);
     }
 
     public SshClient getClient() {
         return client;
     }
 
+    public Terminal getTerminal() {
+        return terminal;
+    }
+
+    public boolean isConnected() {
+        return serverSocket != null && serverSocket.isConnected() && !serverSocket.isClosed();
+    }
+
+    public ClientSessionManager getChannelManager() {
+        return channelManager;
+    }
+
     public void init () throws Exception
     {
 
-        logger.info("client session started for {}", serverSocket.getRemoteSocketAddress());
+        logger.info("client session started for {}:{}", host, port);
 
         try {
+
+
+            // ---------- CONNECT TO SERVER AND INITIALIZE STREAMS -----------
+
             
+            InetAddress address = InetAddress.getByName(host);
+            serverSocket = new Socket(address, port);
 
             inputStream = serverSocket.getInputStream();
             outputStream = serverSocket.getOutputStream();
 
-            packetWriter = new PacketWriter(outputStream);
+            logger.info("Successfully connected to {}", serverSocket.getRemoteSocketAddress());
+
+
+
+            // --------- INITIAL PROTOCOL EXCHANGE ---------
+            
 
             // --------- TEXT PROTOCOL EXCHANGE ---------
 
@@ -392,9 +430,67 @@ public class ClientSession {
             logger.info("Server accepted ssh-userauth service request, ready to authenticate!");
 
 
+
         } catch (Exception e) {
             close();
             throw new IOException("Failed to init session: " + e.getMessage(), e);
+        }
+
+    }
+
+    public void handleIncomingPacket() throws Exception {
+
+        SshBuffer incomingPacket = packetReader.readPacket();
+        byte incomingMsgId = incomingPacket.readByte();
+
+        logger.info("Received packet with Msg ID: {}", incomingMsgId);
+
+        if (incomingMsgId == SshConstants.SSH_MSG_DISCONNECT) {
+            
+            int reasonCode = (int)incomingPacket.readUInt32();
+            String description = incomingPacket.readString();
+            logger.info("Client sent disconnect: {} - {}", reasonCode, description);
+            close();
+
+        }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_SUCCESS || incomingMsgId == SshConstants.SSH_MSG_CHANNEL_FAILURE) {
+
+            channelManager.handleChannelReplay(incomingMsgId, incomingPacket);
+        
+        }else if(incomingMsgId == SshConstants.SSH_MSG_CHANNEL_DATA) {
+
+            channelManager.handleChannelData(incomingPacket);
+
+        }else if( incomingMsgId == SshConstants.SSH_MSG_CHANNEL_WINDOW_ADJUST){
+
+            channelManager.handleChannelWindowAdjust(incomingPacket);
+        
+        }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_CLOSE) {
+
+            channelManager.handleChannelClose(incomingPacket);
+
+        }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_EOF) {
+
+            channelManager.handleChannelEOF(incomingPacket);
+        
+        }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_REQUEST) {
+
+            byte[] reply = channelManager.handleChannelRequest(incomingPacket);
+            if (reply != null) {
+                SshBuffer replyBuffer = new SshBuffer();
+                replyBuffer.writeBytes(reply, 0, reply.length);
+                sendPacket(replyBuffer);
+            }
+
+        }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN_CONFIRMATION) {
+
+            channelManager.handleChannelOpenConfirmation(incomingPacket);
+        
+        }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE) {
+
+            channelManager.handleChannelOpenFailure(incomingPacket);
+        
+        }else{
+            logger.warn("Received unhandled message type: {}", incomingMsgId);
         }
 
     }
@@ -584,19 +680,59 @@ public class ClientSession {
 
     }  
 
+
+    public void sendOpenSessionChannel(Map<String, Object> envVariables, String execCommand )throws IOException {
+    
+        // register the session channel
+
+        SessionChannel channel = new SessionChannel(this, envVariables, execCommand);
+
+        long myId = channelManager.registerChannel(channel);
+
+
+        // build the channel open request for a session channel
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN);
+        buffer.writeString("session"); // channel type
+        buffer.writeUInt32(myId); // sender channel
+        buffer.writeUInt32(1024 * 1024); // initial window size (1MB)
+        buffer.writeUInt32(32 * 1024); // max packet size (32KB)
+
+        try {
+            sendPacket(buffer);
+        } catch (Exception e) {
+            throw new IOException("Failed to send channel open request: " + e.getMessage(), e);
+        }
+
+    }
+
     public void sendPacket(SshBuffer buffer) throws IOException {
         packetWriter.writePacket(buffer);
     }  
 
+    private void sendDisconnect(int reasonCode, String description) throws IOException {
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_DISCONNECT);
+        buffer.writeUInt32(reasonCode);
+        buffer.writeString(description);
+        sendPacket(buffer);
+    }
 
-    private void close() {
+    public void close() {
         
         try {
 
-            logger.info("Closing session for {}", serverSocket.getRemoteSocketAddress());
             if (serverSocket != null && !serverSocket.isClosed()) {
+                sendDisconnect(SshConstants.SSH_DISCONNECT_BY_APPLICATION, "Client disconnecting");
+                logger.info("Closing session for {}", serverSocket.getRemoteSocketAddress());
                 serverSocket.close();
             }
+
+            if (channelManager != null){
+                channelManager.closeAllChannels();
+            }
+            
+            System.out.println("Hmph! It's not like I wanted to keep this session open anyway. Don't take it personally... bye bye!");
 
         } catch (IOException e) {
             logger.error("Error closing socket", e);
