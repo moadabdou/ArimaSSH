@@ -17,6 +17,7 @@ import com.arima.ssh.common.PacketWriter;
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.common.SshProtocolUtils;
+import com.arima.ssh.common.channel.Session;
 import com.arima.ssh.common.crypto.SignatureUtils;
 import com.arima.ssh.common.crypto.SshCipher;
 import com.arima.ssh.common.crypto.SshKeyDecoder;
@@ -26,7 +27,7 @@ import com.arima.ssh.common.kex.KexInitData;
 import com.arima.ssh.common.kex.KexUtils;
 import com.arima.ssh.common.kex.KeyExchange;
 
-public class ClientSession {
+public class ClientSession implements Session {
 
     private static final String CLIENT_VERSION = "SSH-2.0-ArimaSSHClient_0.1";
 

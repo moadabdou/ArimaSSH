@@ -1,145 +1,97 @@
-package com.arima.ssh.server.channel;
+package com.arima.ssh.common.channel;
 
 import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
-import com.arima.ssh.server.ServerSession;
+
+import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
-
 import org.slf4j.LoggerFactory;
 
+/**
+ * Manages the lifecycle of SSH channels for both server and client sessions.
+ * <p>
+ * Protocol-level dispatch (data, window-adjust, close, EOF, open-confirmation,
+ * open-failure, channel-request) is identical on both sides and lives here.
+ * <p>
+ * Channel-open handling is side-specific: override
+ * {@link #handleChannelOpen(SshBuffer)} in a subclass, or use it as-is and
+ * initiate opens from the client side via {@link #sendChannelOpen}.
+ */
 public class ChannelManager {
 
     private final Map<Long, Channel> channels = new ConcurrentHashMap<>();
     private int nextChannelId = 0;
-    private final ServerSession session;
-    private final Logger logger = LoggerFactory.getLogger(ServerSession.class);
+    protected final Session session;
+    protected final Logger logger = LoggerFactory.getLogger(getClass());
 
-    public ChannelManager(ServerSession session) {
+    public ChannelManager(Session session) {
         this.session = session;
     }
 
+    // ========== Handlers (incoming from remote) ==========
+
+    /**
+     * Override in server-side subclass to create channels from incoming open
+     * requests. The default implementation rejects all opens with
+     * SSH_OPEN_UNKNOWN_CHANNEL_TYPE.
+     */
     public byte[] handleChannelOpen(SshBuffer buffer) {
-
         String type = buffer.readString();
-        long senderChannel = buffer.readUInt32();     // Client's ID
-        long initialWindow = buffer.readUInt32(); // Client's Window
-        long maxPacket = buffer.readUInt32();         // Client's Max Packet
+        long senderChannel = buffer.readUInt32();
+        buffer.readUInt32(); // initialWindow
+        buffer.readUInt32(); // maxPacket
 
-        logger.info("Received channel open request: type={}, senderChannel={}, initialWindow={}, maxPacket={}", 
-            type, senderChannel, initialWindow, maxPacket);
+        logger.warn("Rejecting unsupported channel open: type={}", type);
 
-
-        Channel channel = null;
-
-
-        if ("session".equals(type)) {
-
-            channel = new SessionChannel();
-
-        } else if( "direct-tcpip".equals(type)) {
-
-            String targetHost = buffer.readString();
-            long targetPort = buffer.readUInt32();
-            String originatorHost = buffer.readString();
-            long originatorPort = buffer.readUInt32();
-
-            try {
-                channel = new DirectTcpipChannel(targetHost, targetPort, originatorHost, originatorPort);
-            } catch (Exception e) {
-                logger.error("Error creating DirectTcpipChannel: ", e);
-                SshBuffer reply = new SshBuffer();
-                reply.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE);
-                reply.writeUInt32(senderChannel); // Recipient Channel
-                reply.writeUInt32(SshConstants.SSH_OPEN_CONNECT_FAILED); // Reason Code
-                reply.writeString("Failed to connect to " + targetHost + ":" + targetPort); // Description
-                reply.writeString(""); // Language Tag (empty for now)
-                return reply.getCompactData();
-            }
-
-        }else {
-
-            logger.warn("Client requested unsupported channel type: {}", type);
-            SshBuffer reply = new SshBuffer();
-            reply.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE);
-            reply.writeUInt32(senderChannel); // Recipient Channel
-            reply.writeUInt32(SshConstants.SSH_OPEN_UNKNOWN_CHANNEL_TYPE); // Reason Code
-            reply.writeString("Unsupported channel type: " + type); // Description
-            reply.writeString(""); // Language Tag (empty for now)
-            return reply.getCompactData();
-
-        }
-
-        long myId = nextChannelId++;
-        channel.init(session, myId, senderChannel, initialWindow, maxPacket);
-        
-        channels.put(myId, channel);
-
-        // Payload: [recipient channel] [sender channel] [initial window] [max packet]
         SshBuffer reply = new SshBuffer();
-        reply.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN_CONFIRMATION);
-        
-        reply.writeUInt32(senderChannel); // Recipient Channel
-        reply.writeUInt32(myId);          // Sender Channel
-        reply.writeUInt32(2 * 1024 * 1024); // RFC 4253 recommends at least 2 MB for the initial window size
-        reply.writeUInt32(32 * 1024);     // RFC 4253 recommends at least 32 KB for the max packet size
-        
-        logger.info("Channel opened: id {}, type={}, senderChannel={}, initialWindow={}, maxPacket={}", myId, type, senderChannel, initialWindow, maxPacket);
-
+        reply.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE);
+        reply.writeUInt32(senderChannel);
+        reply.writeUInt32(SshConstants.SSH_OPEN_UNKNOWN_CHANNEL_TYPE);
+        reply.writeString("Unsupported channel type: " + type);
+        reply.writeString("");
         return reply.getCompactData();
     }
-    
 
-    public byte[] handleChannelRequest(SshBuffer buffer){
-
+    public byte[] handleChannelRequest(SshBuffer buffer) {
 
         long recipientId = buffer.readUInt32();
         String type = buffer.readString();
-        boolean wantReply = buffer.readBoolean(); 
+        boolean wantReply = buffer.readBoolean();
 
         logger.info("Received channel request: recipientId={}, type={}, wantReply={}", recipientId, type, wantReply);
-    
+
         Channel channel = channels.get(recipientId);
 
         if (channel == null) {
-            
             logger.warn("Received request for unknown channel ID: {}", recipientId);
             if (wantReply) {
                 SshBuffer reply = new SshBuffer();
                 reply.writeByte(SshConstants.SSH_MSG_CHANNEL_FAILURE);
-                reply.writeUInt32(recipientId); // Recipient Channel
+                reply.writeUInt32(recipientId);
                 return reply.getCompactData();
             }
-
             return null;
-
         }
 
         boolean success = channel.handleRequest(type, buffer);
-
         logger.info("Handled channel request: recipientId={}, type={}, success={}", recipientId, type, success);
-
 
         if (wantReply) {
             SshBuffer reply = new SshBuffer();
-
-            logger.info("Sending channel request reply: recipientId={}, type={}, success={}", recipientId, type, success);
-
             if (success) {
                 reply.writeByte(SshConstants.SSH_MSG_CHANNEL_SUCCESS);
             } else {
                 reply.writeByte(SshConstants.SSH_MSG_CHANNEL_FAILURE);
             }
-            reply.writeUInt32(channel.getRemoteId()); 
-
+            reply.writeUInt32(channel.getRemoteId());
             return reply.getCompactData();
         }
 
         return null;
-
-    }   
+    }
 
     public void handleChannelData(SshBuffer buffer) {
 
@@ -150,12 +102,10 @@ public class ChannelManager {
 
         Channel channel = channels.get(recipientId);
 
-        
         if (channel != null) {
             channel.handleData(data);
 
             // Send SSH_MSG_CHANNEL_WINDOW_ADJUST to replenish the local window
-            // so the client can continue sending data
             try {
                 SshBuffer windowAdjust = new SshBuffer();
                 windowAdjust.writeByte(SshConstants.SSH_MSG_CHANNEL_WINDOW_ADJUST);
@@ -168,9 +118,6 @@ public class ChannelManager {
         } else {
             logger.warn("Received data for unknown channel ID: {}", recipientId);
         }
-
-        logger.info("Handled channel data: recipientId={}, dataLength={}", recipientId, data.length);
-
     }
 
     public void handleChannelWindowAdjust(SshBuffer buffer) {
@@ -178,43 +125,33 @@ public class ChannelManager {
         long recipientId = buffer.readUInt32();
         long bytesToAdd = buffer.readUInt32();
 
-        logger.info("Received channel window adjust: recipientId={}, bytesToAdd={}", recipientId, bytesToAdd);
+        logger.debug("Received channel window adjust: recipientId={}, bytesToAdd={}", recipientId, bytesToAdd);
 
         Channel channel = channels.get(recipientId);
-
         if (channel != null) {
             channel.handleWindowAdjust(bytesToAdd);
         } else {
             logger.warn("Received window adjust for unknown channel ID: {}", recipientId);
         }
-
-        logger.info("Handled channel window adjust: recipientId={}, bytesToAdd={}", recipientId, bytesToAdd);
-
     }
 
     public void handleChannelClose(SshBuffer buffer) {
 
         long recipientId = buffer.readUInt32();
-
         logger.info("Received channel close: recipientId={}", recipientId);
 
         Channel channel = channels.get(recipientId);
-
         if (channel != null) {
-
             channels.remove(recipientId);
-            //send channel close back 
             try {
                 channel.sendClose();
             } catch (Exception e) {
-                logger.debug("Failed to send channel close reply for channel {} (client likely already disconnected): {}", recipientId, e.getMessage());
+                logger.debug("Failed to send channel close reply for channel {} (remote likely already disconnected): {}", recipientId, e.getMessage());
             }
-
             logger.info("Closed channel: recipientId={}", recipientId);
         } else {
             logger.warn("Received close for unknown channel ID: {}", recipientId);
         }
-
     }
 
     public void handleChannelOpenConfirmation(SshBuffer buffer) {
@@ -223,7 +160,7 @@ public class ChannelManager {
         long initialWindow = buffer.readUInt32();
         long maxPacket = buffer.readUInt32();
 
-        logger.info("Received channel open confirmation: recipientId={}, senderChannel={}, initialWindow={}, maxPacket={}", 
+        logger.info("Received channel open confirmation: recipientId={}, senderChannel={}, initialWindow={}, maxPacket={}",
             recipientId, senderChannel, initialWindow, maxPacket);
 
         Channel channel = channels.get(recipientId);
@@ -241,12 +178,11 @@ public class ChannelManager {
         long reasonCode = buffer.readUInt32();
         String description = buffer.readString();
 
-        logger.info("Received channel open failure: recipientId={}: reasonCode={}, description={}", recipientId, reasonCode, description);
+        logger.warn("Channel open failed: recipientId={}, reasonCode={}, description={}", recipientId, reasonCode, description);
 
         Channel channel = channels.get(recipientId);
         if (channel != null) {
-            logger.warn("Channel open failed for channel ID {}: reasonCode={}, description={}", recipientId, reasonCode, description);
-            channel.close(); // free any pre-allocated resources
+            channel.close();
             channels.remove(recipientId);
         } else {
             logger.warn("Received channel open failure for unknown channel ID: {}", recipientId);
@@ -255,27 +191,52 @@ public class ChannelManager {
 
     public void handleChannelEOF(SshBuffer buffer) {
         long recipientId = buffer.readUInt32();
-
         logger.info("Received channel EOF: recipientId={}", recipientId);
 
         Channel channel = channels.get(recipientId);
-
         if (channel == null) {
             logger.warn("Received EOF for unknown channel ID: {}", recipientId);
             return;
         }
-
-        // Forward the EOF to the channel (closes process stdin, etc.)
         channel.handleEof();
     }
 
+    // ========== Senders (outgoing to remote) ==========
+
+    /**
+     * Send a channel open request to the remote side.
+     * @param type           channel type (e.g. "session", "direct-tcpip", "forwarded-tcpip")
+     * @param extraData      type-specific payload (may be null)
+     * @param channel        the locally-created channel to register
+     * @return the local channel ID assigned
+     */
+    public long sendChannelOpen(String type, SshBuffer extraData, Channel channel) throws IOException {
+        long myId = registerChannel(channel);
+
+        SshBuffer buf = new SshBuffer();
+        buf.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN);
+        buf.writeString(type);
+        buf.writeUInt32(myId);
+        buf.writeUInt32(2 * 1024 * 1024); // initial window
+        buf.writeUInt32(32 * 1024);        // max packet
+
+        if (extraData != null) {
+            byte[] extra = extraData.getCompactData();
+            buf.writeBytes(extra, 0, extra.length);
+        }
+
+        session.sendPacket(buf);
+        logger.info("Sent channel open: type={}, localId={}", type, myId);
+        return myId;
+    }
+
+    // ========== Channel registry ==========
 
     public long registerChannel(Channel channel) {
         long myId = nextChannelId++;
         channels.put(myId, channel);
         return myId;
     }
-
 
     public void closeAllChannels() {
         logger.info("Closing all channels");

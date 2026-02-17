@@ -1,23 +1,30 @@
-package com.arima.ssh.server.channel;
+package com.arima.ssh.common.channel;
+
 import java.io.IOException;
 
 import com.arima.ssh.common.SshBuffer;
-import com.arima.ssh.server.ServerSession;
 
+/**
+ * Common channel contract for both server-side and client-side SSH channels.
+ */
 public interface Channel {
-    long getChannelId(); // The Server's ID (e.g., 0)
-    long getRemoteId();  // The Client's ID (e.g., 5)
-    ServerSession getSession();
-    
-    void init(ServerSession session, long channelId, long remoteId, long remoteWindow, long remoteMaxPacket);
-    
+
+    long getChannelId();
+    long getRemoteId();
+    Session getSession();
+
+    void init(Session session, long channelId, long remoteId, long remoteWindow, long remoteMaxPacket);
+
+    // --- Handlers (incoming from remote) ---
     boolean handleRequest(String type, SshBuffer buffer);
     void handleWindowAdjust(long bytesToAdd);
     void handleData(byte[] data);
     void handleEof();
 
+    // --- Senders (outgoing to remote) ---
     void sendData(byte[] data, int length) throws IOException;
     void sendEof() throws IOException;
     void sendClose() throws IOException;
+
     void close();
 }
