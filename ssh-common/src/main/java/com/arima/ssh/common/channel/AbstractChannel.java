@@ -80,6 +80,16 @@ public abstract class AbstractChannel implements Channel {
             id, channelId, remoteId, remoteWindow, remoteMaxPacket);
     }
 
+    // ---- Channel Replay ------- 
+    @Override
+    public void handleChannleReplay( byte Type) {
+
+        boolean success = (Type == SshConstants.SSH_MSG_CHANNEL_SUCCESS);
+
+        logger.info("[Channel ch#{}] REPLAY : success={}", id, success);
+
+    }
+
     // ---- Window management ----
 
     @Override

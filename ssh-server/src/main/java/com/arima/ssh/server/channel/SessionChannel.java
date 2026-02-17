@@ -157,7 +157,7 @@ public class SessionChannel extends AbstractChannel {
                 String[] command;
 
                 if (System.getProperty("os.name").toLowerCase().contains("win")) {
-                    command = new String[]{"powershell.exe"};
+                    command = new String[]{"powershell.exe", "-Command", commandString};
                 } else {
                     String shell = System.getenv("SHELL");
                     if (shell == null || shell.isEmpty()) {
@@ -168,10 +168,9 @@ public class SessionChannel extends AbstractChannel {
 
                 Map<String, String> env = new HashMap<>(System.getenv());
                 env.putAll(this.environment);
+                env.put("TERM", this.term != null ? this.term : "xterm-256color");
 
                 if (term != null) {
-
-                    env.put("TERM", this.term != null ? this.term : "xterm-256color");
 
                     PtyProcess process = new PtyProcessBuilder(command)
                         .setEnvironment(env)
@@ -235,6 +234,45 @@ public class SessionChannel extends AbstractChannel {
                 return false;
             }
 
+        }else if("signal".equals(type)){
+
+            // For PTY-backed processes, we can send the actual Unix signal via kill -<SIG> <pid>. 
+            // For plain processes, we write the control character (e.g. 0x03 for INT) to stdin as a fallback.
+
+            String signalName = buffer.readString();
+            logger.info("[SessionChannel ch#{}] Signal name: {}", id, signalName);
+
+            if (shellProcess != null && shellProcess.isAlive()) {
+                try {
+                    if (!(shellProcess instanceof PtyProcess)) {
+                        byte controlChar;
+                        switch (signalName) {
+                            case "INT":
+                                controlChar = 0x03; // Ctrl-C
+                                break;
+                            case "TSTP":
+                                controlChar = 0x1A; // Ctrl-Z
+                                break;
+                            case "QUIT":
+                                controlChar = 0x1C; // Ctrl-\
+                                break;
+                            default:
+                                logger.warn("[SessionChannel ch#{}] Unsupported signal for non-PTY process: {}", id, signalName);
+                                return false;
+                        }
+                        shellProcess.getOutputStream().write(controlChar);
+                        shellProcess.getOutputStream().flush();
+                        logger.info("[SessionChannel ch#{}] Sent control character for signal {} to process", id, signalName);
+                    }
+                } catch (IOException e) {
+                    logger.error("[SessionChannel ch#{}] Failed to send signal {}: {}", id, signalName, e.getMessage(), e);
+                }
+            } else {
+                logger.warn("[SessionChannel ch#{}] Cannot send signal {}, process is not alive", id, signalName);
+            }
+
+            return true;
+
         }
 
         logger.warn("[SessionChannel ch#{}] Unsupported request type: {}", id, type);
@@ -249,14 +287,11 @@ public class SessionChannel extends AbstractChannel {
             return;
         }
 
-        long chunkNum = dataChunksReceived.incrementAndGet();
-        long totalRecv = totalBytesReceived.addAndGet(data.length);
-
         if (shellProcess != null && shellProcess.isAlive()) {
             try {
                 shellProcess.getOutputStream().write(data);
                 shellProcess.getOutputStream().flush();
-                logger.debug("[SessionChannel ch#{}] DATA_IN: chunk #{}, {} bytes (totalReceived={})", id, chunkNum, data.length, totalRecv);
+                logger.debug("[SessionChannel ch#{}] DATA_IN: {} bytes written to process", id, data.length);
             } catch (IOException e) {
                 logger.error("[SessionChannel ch#{}] DATA_IN ERROR: failed to write {} bytes to process - {}", id, data.length, e.getMessage(), e);
             }
@@ -297,23 +332,22 @@ public class SessionChannel extends AbstractChannel {
                 while ((read = shellOut.read(buffer)) != -1) {
                     if (read > 0) {
 
-                        long chunkNum = dataChunksSent.incrementAndGet();
-                        long totalSent = totalBytesSent.addAndGet(read);
-
                         try {
                             waitForWindow(read);
                         } catch (InterruptedException e) {
-                            logger.error("[SessionChannel ch#{}] Pump INTERRUPTED while waiting for window (chunk #{}, {} bytes pending)", id, chunkNum, read, e);
+                            logger.error("[SessionChannel ch#{}] Pump INTERRUPTED while waiting for window ({} bytes pending)",
+                                id, read, e);
                             Thread.currentThread().interrupt();
                             break;
                         }
 
                         try {
                             sendData(buffer, read);
-                            logger.debug("[SessionChannel ch#{}] Pump: sent chunk #{}, {} bytes to client (totalSent={})", id, chunkNum, read, totalSent);
+                            logger.debug("[SessionChannel ch#{}] Pump: sent chunk #{}, {} bytes (totalSent={})",
+                                id, dataChunksSent.get(), read, totalBytesSent.get());
                         } catch (IOException e) {
-                            logger.error("[SessionChannel ch#{}] Pump ERROR sending data to client for chunk #{}: {} ({} bytes)",
-                                id, chunkNum, e.getMessage(), read, e);
+                            logger.error("[SessionChannel ch#{}] Pump ERROR sending {} bytes: {}",
+                                id, read, e.getMessage(), e);
                             break;
                         }
                     }

@@ -17,6 +17,7 @@ public interface Channel {
 
     // --- Handlers (incoming from remote) ---
     boolean handleRequest(String type, SshBuffer buffer);
+    void handleChannleReplay( byte Type);
     void handleWindowAdjust(long bytesToAdd);
     void handleData(byte[] data);
     void handleEof();

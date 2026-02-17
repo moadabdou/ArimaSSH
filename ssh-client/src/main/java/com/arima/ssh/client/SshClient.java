@@ -1,11 +1,12 @@
 package com.arima.ssh.client;
 
 
-import java.net.InetAddress;
-import java.net.Socket;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.Security;
+import java.util.HashMap;
 import java.util.concurrent.Callable;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -28,7 +29,9 @@ import picocli.CommandLine.Parameters;
 @Command(name = "arima-ssh", mixinStandardHelpOptions = true, version = "1.0",
          description = "ArimaSSH Client - A Java SSHv2 Implementation")
 public class SshClient implements Callable<Integer> {
-
+ 
+    @Option(names = {"-N", "--no-shell"}, description = "Do not request a shell (useful for port forwarding)")
+    private boolean noShell = false;
 
     @Option(names = {"-i", "--identity"}, description = "Identity file (private key) for authentication")
     private Path identityFile;
@@ -38,6 +41,9 @@ public class SshClient implements Callable<Integer> {
 
     @Parameters(index = "0", description = "Destination (user@host)")
     private String destination;
+
+    @Parameters(index = "1", description = "Command to execute (optional)", arity = "0..*")
+    private String[] command;
   
     private static final Logger logger = LoggerFactory.getLogger(SshClient.class);
     // private Banner banner = new DefaultBanner();
@@ -49,7 +55,6 @@ public class SshClient implements Callable<Integer> {
 
     private String authMethods;
 
-
     public ClientSession getSession() {
         return session;
     }
@@ -57,38 +62,7 @@ public class SshClient implements Callable<Integer> {
     public String getUsername() {
         return username;
     }
-
-    public String getHost() {
-        return host;
-    }
-
-    public int getPort() {
-        return port;
-    }
-
-    public String getAuthMethods() {
-        return authMethods;
-    }
-
-    public void connect() throws Exception {
-
-        InetAddress address = InetAddress.getByName(host);
-        Socket socket = new Socket(address, port);
-        logger.info("Successfully connected to {}:{}", host, port);
-        
-        logger.info ("initializing a client session for user '{}' on {}:{}", username, host, port);  
-        session = new ClientSession(socket, this);
-
-        session.init();
-
-        logger.info("SSH client setup complete. Ready to authenticate and open channels.");
-
-        authMethods = session.requestAuthMethods();
-
-        logger.info("Server supports the following authentication methods: {}", authMethods);
- 
-    }
-
+    
     public static void main(String[] args) {
         Security.addProvider(new BouncyCastleProvider());
         int exitCode = new CommandLine(new SshClient()).execute(args);
@@ -109,8 +83,6 @@ public class SshClient implements Callable<Integer> {
 
         System.out.print(new DefaultBanner().loadBanner());
 
-        System.out.println("Connecting to " + host + ":" + port + " as " + username + "...");
-
         KeyPair keyPair = null;
 
         if (identityFile != null) {
@@ -130,7 +102,11 @@ public class SshClient implements Callable<Integer> {
 
 
             // connect and perform SSH handshake
-            connect();
+            System.out.println("Connecting to " + host + ":" + port + " as " + username + "...");
+
+            session = new ClientSession(host, port, this, terminal);
+            session.init();
+            authMethods = session.requestAuthMethods();
 
             boolean authenticated = false;
             LineReader lineReader = LineReaderBuilder.builder().terminal(terminal).build();
@@ -158,9 +134,66 @@ public class SshClient implements Callable<Integer> {
 
             }
 
-            System.out.println("Logged in! (Shell coming soon...)");
+            System.out.println("Logged in! ");
+
+            // look for ~/.arima_ssh/arima_env file for the env variables to set on the server side
+
+            // check if ~/.arima_ssh/arima_env exists
+
+            Path envFile = Path.of(System.getProperty("user.home"), ".arima_ssh", "arima_env");
+
+            HashMap<String, Object> envVariables = new HashMap<>();
+
+            if (envFile.toFile().exists()) {
+
+                System.out.println("Loading environment variables from " + envFile);
+
+                try {
+                    String content = Files.readString(envFile);
+                    String[] lines = content.split("\\r?\\n");
+                    for (String line : lines) {
+                        if (line.trim().isEmpty() || line.startsWith("#")) {
+                            continue; // skip empty lines and comments
+                        }
+                        String[] kv = line.split("=", 2);
+                        if (kv.length == 2) {
+                            String key = kv[0].trim();
+                            String value = kv[1].trim();
+                            envVariables.put(key, value);
+                            System.out.println("Set env variable: " + key + "=" + value);
+                        } else {
+                            System.out.println("Invalid env variable line: " + line);
+                        }
+                    }
+                } catch (IOException e) {
+                    System.err.println("Failed to read env file: " + e.getMessage());
+                }
+
+            }
   
-            while(true) Thread.sleep(1000);
+            
+            if (!noShell) {
+
+                System.out.println("Requesting shell...");
+
+                session.sendOpenSessionChannel(
+                    envVariables.isEmpty() ? null : envVariables, 
+                    command != null && command.length > 0 ? 
+                        String.join(" ", command) : 
+                        null
+                );
+
+            }
+
+
+            while (session.isConnected() && session.getChannelManager().hasOpenChannels()){
+        
+                session.handleIncomingPacket();
+
+            }
+
+            session.close();
+
 
         }catch (Exception e) {
 

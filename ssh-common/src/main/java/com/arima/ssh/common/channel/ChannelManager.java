@@ -31,6 +31,10 @@ public class ChannelManager {
         this.session = session;
     }
 
+    public boolean hasOpenChannels() {
+        return !channels.isEmpty();
+    }
+
     // ========== Handlers (incoming from remote) ==========
 
     /**
@@ -91,6 +95,25 @@ public class ChannelManager {
         }
 
         return null;
+    }
+
+    public void handleChannelReplay(byte type,SshBuffer buffer){
+
+        long recipientId = buffer.readUInt32();
+
+        Channel channel = channels.get(recipientId);
+
+        logger.info("Received channel request replay: recipientId={}, type={}, success={}", recipientId, type, (type == SshConstants.SSH_MSG_CHANNEL_SUCCESS));
+
+        if (channel != null){
+
+            channel.handleChannleReplay(type);
+
+        }else {
+            logger.warn("Received channel request replay for unknown channel ID: {}", recipientId);
+        }
+
+
     }
 
     public void handleChannelData(SshBuffer buffer) {

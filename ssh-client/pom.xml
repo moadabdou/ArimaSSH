@@ -90,11 +90,12 @@
             <configuration>
                 <mainClass>com.arima.ssh.client.SshClient</mainClass>
                 <arguments>
-                    <argument>moadabdou@localhost</argument>
                     <argument>-p</argument>
                     <argument>2222</argument>
                     <argument>-i</argument>
                     <argument>/home/moadabdou/.arima_ssh/arima_kana_key</argument>
+                    <argument>moadabdou@localhost</argument>
+                    <!-- <argument>find / name "*"</argument> -->
                 </arguments>
 
             </configuration>
