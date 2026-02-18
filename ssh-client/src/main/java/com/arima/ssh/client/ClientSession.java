@@ -14,7 +14,7 @@ import org.jline.terminal.Terminal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.arima.ssh.client.channel.ClientSessionManager;
+import com.arima.ssh.client.channel.ClientChannelManager;
 import com.arima.ssh.client.channel.SessionChannel;
 import com.arima.ssh.common.NegotiationUtils;
 import com.arima.ssh.common.PacketReader;
@@ -82,7 +82,8 @@ public class ClientSession implements Session {
     private long gexPreferred;
     private long gexMax;
 
-    private ClientSessionManager channelManager;
+    private ClientChannelManager channelManager;
+    private ClientForwardingManager forwardingManager;
 
 
     public ClientSession(String host, int port , SshClient client, Terminal terminal) {
@@ -90,7 +91,8 @@ public class ClientSession implements Session {
         this.port = port;
         this.client = client;
         this.terminal = terminal;
-        this.channelManager = new ClientSessionManager(this);
+        this.channelManager = new ClientChannelManager(this);
+        this.forwardingManager = new ClientForwardingManager(this.channelManager);
     }
 
     public SshClient getClient() {
@@ -105,7 +107,7 @@ public class ClientSession implements Session {
         return serverSocket != null && serverSocket.isConnected() && !serverSocket.isClosed();
     }
 
-    public ClientSessionManager getChannelManager() {
+    public ClientChannelManager getChannelManager() {
         return channelManager;
     }
 
@@ -465,9 +467,9 @@ public class ClientSession implements Session {
             channelManager.handleChannelWindowAdjust(incomingPacket);
         
         }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_CLOSE) {
-
+            
             channelManager.handleChannelClose(incomingPacket);
-
+            
         }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_EOF) {
 
             channelManager.handleChannelEOF(incomingPacket);
@@ -489,6 +491,35 @@ public class ClientSession implements Session {
 
             channelManager.handleChannelOpenFailure(incomingPacket);
         
+        }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN) {
+
+            byte[] channelOpenResponse = channelManager.handleChannelOpen(incomingPacket);
+            if (channelOpenResponse != null) {
+                sendPacket(new SshBuffer(channelOpenResponse));
+            }
+        
+        }else if (incomingMsgId == SshConstants.SSH_MSG_GLOBAL_REQUEST) {
+
+            logger.info("Received global request from server");
+            String requestName = incomingPacket.readString();
+            boolean wantReply = incomingPacket.readBoolean();
+            logger.info("Global Request: {}, wantReply={}", requestName, wantReply);
+
+            // Client does not handle any global requests yet
+            if (wantReply) {
+                SshBuffer reply = new SshBuffer();
+                reply.writeByte(SshConstants.SSH_MSG_REQUEST_FAILURE);
+                sendPacket(reply);
+            }
+
+        }else if (incomingMsgId == SshConstants.SSH_MSG_REQUEST_SUCCESS) {
+
+            logger.info("Global request succeeded (e.g. tcpip-forward accepted by server)");
+
+        }else if (incomingMsgId == SshConstants.SSH_MSG_REQUEST_FAILURE) {
+
+            logger.warn("Global request failed (e.g. tcpip-forward rejected by server)");
+
         }else{
             logger.warn("Received unhandled message type: {}", incomingMsgId);
         }
@@ -681,6 +712,38 @@ public class ClientSession implements Session {
     }  
 
 
+    /**
+     * Request remote forwarding (-R): asks the server to listen on bindAddr:bindPort.
+     * When a connection arrives there, the server sends "forwarded-tcpip" channel-open
+     * which our ClientChannelManager handles by creating a RemoteTcpIpChannel.
+     */
+    public void requestRemoteForwarding(String bindAddr, int bindPort, String targetHost, int targetPort) throws IOException {
+        logger.info("Requesting remote forwarding: {}:{} -> {}:{}", bindAddr, bindPort, targetHost, targetPort);
+        
+        channelManager.registerRemoteTcpIp(bindAddr, bindPort, targetHost, targetPort);
+
+        SshBuffer buffer = new SshBuffer();
+        buffer.writeByte(SshConstants.SSH_MSG_GLOBAL_REQUEST);
+        buffer.writeString("tcpip-forward");
+        buffer.writeBoolean(true); // want reply
+        buffer.writeString(bindAddr);
+        buffer.writeUInt32(bindPort);
+        sendPacket(buffer);
+    }
+
+    /**
+     * Request local forwarding (-L): binds a local port and tunnels connections
+     * to the remote side via "direct-tcpip" channel-open messages.
+     */
+    public boolean requestLocalForwarding(String bindAddr, int bindPort, String targetHost, int targetPort) {
+        logger.info("Requesting local forwarding: {}:{} -> {}:{}", bindAddr, bindPort, targetHost, targetPort);
+        return forwardingManager.requestForwarding(bindAddr, bindPort, targetHost, targetPort);
+    }
+
+    public ClientForwardingManager getForwardingManager() {
+        return forwardingManager;
+    }
+
     public void sendOpenSessionChannel(Map<String, Object> envVariables, String execCommand )throws IOException {
     
         // register the session channel
@@ -730,6 +793,10 @@ public class ClientSession implements Session {
 
             if (channelManager != null){
                 channelManager.closeAllChannels();
+            }
+
+            if (forwardingManager != null){
+                forwardingManager.closeAll();
             }
             
             System.out.println("Hmph! It's not like I wanted to keep this session open anyway. Don't take it personally... bye bye!");

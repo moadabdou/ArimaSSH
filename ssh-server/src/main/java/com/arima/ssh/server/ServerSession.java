@@ -35,7 +35,7 @@ public class ServerSession implements Runnable, Session {
     private final SshServer server;
 
     private ServerChannelManager channelManager;
-    private ForwardingManager forwardingManager;
+    private ServerForwardingManager forwardingManager;
 
     private InputStream inputStream;
     private OutputStream outputStream;
@@ -77,7 +77,7 @@ public class ServerSession implements Runnable, Session {
         this.clientSocket = clientSocket;
         this.server = server;
         this.channelManager = new ServerChannelManager(this);
-        this.forwardingManager = new ForwardingManager(this);
+        this.forwardingManager = new ServerForwardingManager(this.channelManager);
     }
 
 
@@ -798,6 +798,10 @@ public class ServerSession implements Runnable, Session {
                     }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE) {
 
                         channelManager.handleChannelOpenFailure(incomingPacket);
+
+                    }else if (incomingMsgId == SshConstants.SSH_MSG_CHANNEL_SUCCESS || incomingMsgId == SshConstants.SSH_MSG_CHANNEL_FAILURE) {
+
+                        channelManager.handleChannelReplay(incomingMsgId, incomingPacket);
                     
                     }else if( incomingMsgId == SshConstants.SSH_MSG_GLOBAL_REQUEST){
 

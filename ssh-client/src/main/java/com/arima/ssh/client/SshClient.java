@@ -39,6 +39,12 @@ public class SshClient implements Callable<Integer> {
     @Option(names = {"-p", "--port"}, description = "Port to connect to (default: 2222)")
     private int port = 2222;
 
+    @Option(names = {"-L"}, description = "Local forwarding: [bindAddr:]bindPort:targetHost:targetPort", arity = "0..*")
+    private String[] localForwards;
+
+    @Option(names = {"-R"}, description = "Remote forwarding: [bindAddr:]bindPort:targetHost:targetPort", arity = "0..*")
+    private String[] remoteForwards;
+
     @Parameters(index = "0", description = "Destination (user@host)")
     private String destination;
 
@@ -172,6 +178,32 @@ public class SshClient implements Callable<Integer> {
             }
   
             
+            // --- Set up local port forwarding (-L) ---
+            if (localForwards != null) {
+                for (String spec : localForwards) {
+                    ForwardSpec parsed = parseForwardSpec(spec);
+                    if (parsed != null) {
+                        System.out.println("Local forwarding: " + parsed.bindHost + ":" + parsed.bindPort + " -> " + parsed.targetHost + ":" + parsed.targetPort);
+                        session.requestLocalForwarding(parsed.bindHost, parsed.bindPort, parsed.targetHost, parsed.targetPort);
+                    } else {
+                        System.err.println("Invalid -L spec: " + spec);
+                    }
+                }
+            }
+
+            // --- Set up remote port forwarding (-R) ---
+            if (remoteForwards != null) {
+                for (String spec : remoteForwards) {
+                    ForwardSpec parsed = parseForwardSpec(spec);
+                    if (parsed != null) {
+                        System.out.println("Remote forwarding: " + parsed.bindHost + ":" + parsed.bindPort + " -> " + parsed.targetHost + ":" + parsed.targetPort);
+                        session.requestRemoteForwarding(parsed.bindHost, parsed.bindPort, parsed.targetHost, parsed.targetPort);
+                    } else {
+                        System.err.println("Invalid -R spec: " + spec);
+                    }
+                }
+            }
+
             if (!noShell) {
 
                 System.out.println("Requesting shell...");
@@ -186,7 +218,7 @@ public class SshClient implements Callable<Integer> {
             }
 
 
-            while (session.isConnected() && session.getChannelManager().hasOpenChannels()){
+            while (session.isConnected() && (session.getChannelManager().hasOpenChannels() || noShell)){
         
                 session.handleIncomingPacket();
 
@@ -202,5 +234,41 @@ public class SshClient implements Callable<Integer> {
         }
 
         return 0;
+    }
+
+    public static class ForwardSpec {
+        String bindHost;
+        int bindPort;
+        String targetHost;
+        int targetPort;
+
+        public ForwardSpec(String bindHost, int bindPort, String targetHost, int targetPort) {
+            this.bindHost = bindHost;
+            this.bindPort = bindPort;
+            this.targetHost = targetHost;
+            this.targetPort = targetPort;
+        }
+    }
+
+    /**
+     * Parse a forwarding spec of the form [bindAddr:]bindPort:targetHost:targetPort.
+     * Returns ForwardSpec object.
+     * Returns null if the spec is malformed.
+     */
+    private ForwardSpec parseForwardSpec(String spec) {
+        String[] parts = spec.split(":");
+        try {
+            if (parts.length == 4) {
+                // bindAddr:bindPort:targetHost:targetPort
+                return new ForwardSpec(parts[0], Integer.parseInt(parts[1]), parts[2], Integer.parseInt(parts[3]));
+            } else if (parts.length == 3) {
+                // bindPort:targetHost:targetPort (bindAddr defaults to localhost or 0.0.0.0 depending on usage, usually localhost for -L)
+                // For consistency with typical SSH clients, missing bindAddr often means localhost for -L
+                // But for -R it might default to empty string or *
+                // Here we default to "localhost" as per previous logic which had parsed[0] == -1
+                return new ForwardSpec("localhost", Integer.parseInt(parts[0]), parts[1], Integer.parseInt(parts[2]));
+            }
+        } catch (NumberFormatException ignored) {}
+        return null;
     }
 }
