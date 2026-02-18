@@ -4,6 +4,7 @@ import com.arima.ssh.common.SshBuffer;
 import com.arima.ssh.common.SshConstants;
 import com.arima.ssh.common.channel.Channel;
 import com.arima.ssh.common.channel.ChannelManager;
+import com.arima.ssh.common.channel.RemoteTcpIpChannel;
 import com.arima.ssh.server.ServerSession;
 
 /**
@@ -43,10 +44,13 @@ public class ServerChannelManager extends ChannelManager {
             String originatorHost = buffer.readString();
             long originatorPort = buffer.readUInt32();
 
+            logger.info("Received direct-tcpip channel open request: targetHost={}, targetPort={}, originatorHost={}, originatorPort={}",
+                targetHost, targetPort, originatorHost, originatorPort);
+
             try {
-                channel = new DirectTcpipChannel(targetHost, targetPort, originatorHost, originatorPort);
+                channel = new RemoteTcpIpChannel(targetHost, targetPort, originatorHost, originatorPort);
             } catch (Exception e) {
-                logger.error("Error creating DirectTcpipChannel: ", e);
+                logger.error("Error creating RemoteTcpIpChannel: ", e);
                 SshBuffer reply = new SshBuffer();
                 reply.writeByte(SshConstants.SSH_MSG_CHANNEL_OPEN_FAILURE);
                 reply.writeUInt32(senderChannel);
