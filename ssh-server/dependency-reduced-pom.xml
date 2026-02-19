@@ -6,9 +6,9 @@
     <version>0.1.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
-  <artifactId>ssh-client</artifactId>
-  <name>ssh-client</name>
-  <description>SSH client implementation</description>
+  <artifactId>ssh-server</artifactId>
+  <name>ssh-server</name>
+  <description>SSH server implementation</description>
   <build>
     <plugins>
       <plugin>
@@ -23,7 +23,7 @@
             <configuration>
               <transformers>
                 <transformer>
-                  <mainClass>com.arima.ssh.client.Main</mainClass>
+                  <mainClass>com.arima.ssh.server.SshServer</mainClass>
                 </transformer>
               </transformers>
               <filters>
@@ -45,20 +45,7 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.1.0</version>
         <configuration>
-          <mainClass>com.arima.ssh.client.Main</mainClass>
-          <arguments>
-            <argument>-N</argument>
-            <argument>-v</argument>
-            <argument>-p</argument>
-            <argument>3003</argument>
-            <argument>-i</argument>
-            <argument>/home/moadabdou/.arima_ssh/arima_kana_key</argument>
-            <argument>moadabdou@localhost</argument>
-            <argument>-L</argument>
-            <argument>6677:localhost:9000</argument>
-            <argument>-R</argument>
-            <argument>8585:localhost:3003</argument>
-          </arguments>
+          <mainClass>com.arima.ssh.server.SshServer</mainClass>
         </configuration>
       </plugin>
     </plugins>

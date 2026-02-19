@@ -53,6 +53,7 @@ public class SshKeyDecoder {
             case "RSA":
                 return "ssh-rsa";
             case "Ed25519":
+            case "EdDSA":
                 return "ssh-ed25519";
             default:
                 throw new IllegalArgumentException("Unsupported Java Key Algorithm: " + algo);
@@ -69,8 +70,11 @@ public class SshKeyDecoder {
             java.security.interfaces.RSAPublicKey rsaKey = (java.security.interfaces.RSAPublicKey) key;
             buffer.writeMpint(rsaKey.getPublicExponent());
             buffer.writeMpint(rsaKey.getModulus());
-        } else if (key instanceof java.security.interfaces.EdECPublicKey) {
+        } else if (key instanceof java.security.interfaces.EdECPublicKey || 
+                   "Ed25519".equals(key.getAlgorithm()) || 
+                   "EdDSA".equals(key.getAlgorithm())) {
             // For Ed25519, the public key is just the raw 32 bytes
+            // Works with both Java's EdECPublicKey and BouncyCastle's BCEdDSAPublicKey
             byte[] keyData = key.getEncoded();
             // Extract the raw 32 bytes from the X.509 encoding
             byte[] rawKeyData = new byte[32];
