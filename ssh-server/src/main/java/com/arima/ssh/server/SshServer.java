@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 import com.arima.ssh.server.auth.FilePublicKeyAuthenticator;
 import com.arima.ssh.server.auth.PasswordAuthenticator;
 import com.arima.ssh.server.auth.PublicKeyAuthenticator;
-import com.arima.ssh.server.auth.StaticPasswordAuthenticator;
+import com.arima.ssh.server.auth.SystemPasswordAuthenticator;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -21,8 +21,8 @@ public class SshServer
 {
 
     public final Logger logger = LoggerFactory.getLogger(SshServer.class);
-    // Port 3003 - Arima Kana's birthday is March 3rd (3/03) ♪
-    private final int PORT = 3003;
+
+    private int port = 3003; // Default: Arima Kana's birthday is March 3rd (3/03) ♪
 
     private ServerSocket serverSocket; 
     private boolean running = true;
@@ -72,11 +72,19 @@ public class SshServer
         this.bannerProvider = bannerProvider;
     }
 
+    public void setPort(int port) {
+        this.port = port;
+    }
+
+    public int getPort() {
+        return port;
+    }
+
     public void start(){
 
         try {
-            serverSocket = new ServerSocket(PORT);
-            logger.info("ArimaSSH Server started on port " + PORT);
+            serverSocket = new ServerSocket(port);
+            logger.info("ArimaSSH Server started on port " + port);
 
             while (running) {
                 Socket clientSocket = serverSocket.accept();
@@ -150,9 +158,20 @@ public class SshServer
                 return;
             }
         }
-        
-        StaticPasswordAuthenticator authenticator = new StaticPasswordAuthenticator();
-        authenticator.addUser("moadabdou", "arima");
+
+        // Load server configuration
+        Path configPath = ArimaSshDir.resolve(".config");
+        ServerConfig config = new ServerConfig(configPath);
+        try {
+            config.load();
+        } catch (IOException e) {
+            sshServer.logger.error("Failed to load server config: ", e);
+            return;
+        }
+        sshServer.setPort(config.getPort());
+
+        // Use system PAM authentication
+        SystemPasswordAuthenticator authenticator = new SystemPasswordAuthenticator();
 
         FilePublicKeyAuthenticator filePublicKeyAuthenticator = new FilePublicKeyAuthenticator(authorizedKeysPath);
 
