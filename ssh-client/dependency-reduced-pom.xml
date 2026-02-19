@@ -23,7 +23,7 @@
             <configuration>
               <transformers>
                 <transformer>
-                  <mainClass>com.arima.ssh.client.SshClient</mainClass>
+                  <mainClass>com.arima.ssh.client.Main</mainClass>
                 </transformer>
               </transformers>
             </configuration>
@@ -35,16 +35,19 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.1.0</version>
         <configuration>
-          <mainClass>com.arima.ssh.client.SshClient</mainClass>
+          <mainClass>com.arima.ssh.client.Main</mainClass>
           <arguments>
             <argument>-N</argument>
+            <argument>-v</argument>
             <argument>-p</argument>
-            <argument>2222</argument>
+            <argument>3003</argument>
             <argument>-i</argument>
             <argument>/home/moadabdou/.arima_ssh/arima_kana_key</argument>
             <argument>moadabdou@localhost</argument>
+            <argument>-L</argument>
+            <argument>6677:localhost:9000</argument>
             <argument>-R</argument>
-            <argument>5656:localhost:2222</argument>
+            <argument>8585:localhost:3003</argument>
           </arguments>
         </configuration>
       </plugin>

@@ -21,7 +21,8 @@ public class SshServer
 {
 
     public final Logger logger = LoggerFactory.getLogger(SshServer.class);
-    private final int PORT = 2222; //TODO: find another port representing the name of Arima and not used by other applications
+    // Port 3003 - Arima Kana's birthday is March 3rd (3/03) ♪
+    private final int PORT = 3003;
 
     private ServerSocket serverSocket; 
     private boolean running = true;

@@ -2,6 +2,7 @@ package com.arima.ssh.client;
 
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -14,6 +15,8 @@ import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.jline.utils.AttributedString;
+import org.jline.utils.AttributedStyle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory; 
 
@@ -36,8 +39,12 @@ public class SshClient implements Callable<Integer> {
     @Option(names = {"-i", "--identity"}, description = "Identity file (private key) for authentication")
     private Path identityFile;
 
-    @Option(names = {"-p", "--port"}, description = "Port to connect to (default: 2222)")
-    private int port = 2222;
+    // Port 3003 - Arima Kana's birthday is March 3rd (3/03) ♪
+    @Option(names = {"-p", "--port"}, description = "Port to connect to (default: 3003)")
+    private int port = 3003;
+
+    @Option(names = {"-v", "--verbose"}, description = "Enable verbose logging (shows debug output)")
+    private static boolean verbose = false;
 
     @Option(names = {"-L"}, description = "Local forwarding: [bindAddr:]bindPort:targetHost:targetPort", arity = "0..*")
     private String[] localForwards;
@@ -69,10 +76,60 @@ public class SshClient implements Callable<Integer> {
         return username;
     }
     
-    public static void main(String[] args) {
-        Security.addProvider(new BouncyCastleProvider());
+    /**
+     * Entry point when run via launcher (Main.java).
+     * Logging is already configured by the launcher.
+     */
+    public static void run(String[] args) {
         int exitCode = new CommandLine(new SshClient()).execute(args);
         System.exit(exitCode);
+    }
+    
+    /**
+     * Direct entry point (for backwards compatibility).
+     * Note: For verbose logging to work properly, use Main.java as entry point.
+     */
+    public static void main(String[] args) {
+        // Set logging off by default (verbose won't work from here, use Main.java)
+        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "off");
+        Security.addProvider(new BouncyCastleProvider());
+        run(args);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Arima Kana Styled Output - Because a genius idol deserves cute messages! ♪
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    private PrintWriter out;
+    
+    private void kanaInfo(String message) {
+        out.println(new AttributedString("✦ " + message, 
+            AttributedStyle.DEFAULT.foreground(AttributedStyle.MAGENTA)).toAnsi());
+        out.flush();
+    }
+    
+    private void kanaSuccess(String message) {
+        out.println(new AttributedString("★ " + message, 
+            AttributedStyle.DEFAULT.foreground(AttributedStyle.GREEN).bold()).toAnsi());
+        out.flush();
+    }
+    
+    private void kanaError(String message) {
+        out.println(new AttributedString("✗ Mou~! " + message, 
+            AttributedStyle.DEFAULT.foreground(AttributedStyle.RED).bold()).toAnsi());
+        out.flush();
+    }
+    
+    private void kanaWarn(String message) {
+        out.println(new AttributedString("♪ " + message, 
+            AttributedStyle.DEFAULT.foreground(AttributedStyle.YELLOW)).toAnsi());
+        out.flush();
+    }
+    
+    private void kanaConnect(String message) {
+        out.println(new AttributedString("→ " + message, 
+            AttributedStyle.DEFAULT.foreground(AttributedStyle.CYAN)).toAnsi());
+        out.flush();
     }
 
     @Override
@@ -80,7 +137,8 @@ public class SshClient implements Callable<Integer> {
 
         String[] parts = destination.split("@");
         if (parts.length != 2) {
-            System.err.println("Invalid format. Use: user@host");
+            System.err.println(new AttributedString("✗ Baka! Invalid format. Use: user@host", 
+                AttributedStyle.DEFAULT.foreground(AttributedStyle.RED).bold()).toAnsi());
             return 1;
         }
         
@@ -97,18 +155,22 @@ public class SshClient implements Callable<Integer> {
             try {
                 keyPair = PemUtils.readPemFile(identityFile);
             } catch (Exception e) {
-                System.err.println("Failed to load identity file: " + e.getMessage());
+                System.err.println(new AttributedString("✗ Hmph! Failed to load identity file: " + e.getMessage(), 
+                    AttributedStyle.DEFAULT.foreground(AttributedStyle.RED).bold()).toAnsi());
                 return 1;
             }
-
-            System.out.println("Using identity file: " + identityFile);
         }
 
         try (Terminal terminal = TerminalBuilder.builder().system(true).build()) {
-
+            
+            out = terminal.writer();
+            
+            if (identityFile != null) {
+                kanaInfo("Using my special key: " + identityFile);
+            }
 
             // connect and perform SSH handshake
-            System.out.println("Connecting to " + host + ":" + port + " as " + username + "...");
+            kanaConnect("Connecting to " + host + ":" + port + " as " + username + "... Watch me!");
 
             session = new ClientSession(host, port, this, terminal);
             session.init();
@@ -130,17 +192,19 @@ public class SshClient implements Callable<Integer> {
 
             while (!authenticated) {
 
-                String password = lineReader.readLine("password: ", '*');
+                String password = lineReader.readLine(
+                    new AttributedString("Password (don't mess up!): ", 
+                        AttributedStyle.DEFAULT.foreground(AttributedStyle.MAGENTA)).toAnsi(), '*');
                 
                 if (getSession().authenticateWithPassword(password)) {
                     authenticated = true;
                 } else {
-                    System.out.println("Permission denied, please try again.");
+                    kanaError("Permission denied! Are you even trying? Try again!");
                 }
 
             }
 
-            System.out.println("Logged in! ");
+            kanaSuccess("Logged in! See? I knew you could do it! ♪");
 
             // look for ~/.arima_ssh/arima_env file for the env variables to set on the server side
 
@@ -152,7 +216,7 @@ public class SshClient implements Callable<Integer> {
 
             if (envFile.toFile().exists()) {
 
-                System.out.println("Loading environment variables from " + envFile);
+                kanaInfo("Loading environment variables~ " + envFile);
 
                 try {
                     String content = Files.readString(envFile);
@@ -166,13 +230,13 @@ public class SshClient implements Callable<Integer> {
                             String key = kv[0].trim();
                             String value = kv[1].trim();
                             envVariables.put(key, value);
-                            System.out.println("Set env variable: " + key + "=" + value);
+                            kanaInfo("Set: " + key + "=" + value);
                         } else {
-                            System.out.println("Invalid env variable line: " + line);
+                            kanaWarn("Hmm? Invalid line: " + line);
                         }
                     }
                 } catch (IOException e) {
-                    System.err.println("Failed to read env file: " + e.getMessage());
+                    kanaError("Failed to read env file: " + e.getMessage());
                 }
 
             }
@@ -183,10 +247,10 @@ public class SshClient implements Callable<Integer> {
                 for (String spec : localForwards) {
                     ForwardSpec parsed = parseForwardSpec(spec);
                     if (parsed != null) {
-                        System.out.println("Local forwarding: " + parsed.bindHost + ":" + parsed.bindPort + " -> " + parsed.targetHost + ":" + parsed.targetPort);
+                        kanaInfo("Local forwarding: " + parsed.bindHost + ":" + parsed.bindPort + " → " + parsed.targetHost + ":" + parsed.targetPort);
                         session.requestLocalForwarding(parsed.bindHost, parsed.bindPort, parsed.targetHost, parsed.targetPort);
                     } else {
-                        System.err.println("Invalid -L spec: " + spec);
+                        kanaError("Invalid -L spec: " + spec);
                     }
                 }
             }
@@ -196,17 +260,17 @@ public class SshClient implements Callable<Integer> {
                 for (String spec : remoteForwards) {
                     ForwardSpec parsed = parseForwardSpec(spec);
                     if (parsed != null) {
-                        System.out.println("Remote forwarding: " + parsed.bindHost + ":" + parsed.bindPort + " -> " + parsed.targetHost + ":" + parsed.targetPort);
+                        kanaInfo("Remote forwarding: " + parsed.bindHost + ":" + parsed.bindPort + " → " + parsed.targetHost + ":" + parsed.targetPort);
                         session.requestRemoteForwarding(parsed.bindHost, parsed.bindPort, parsed.targetHost, parsed.targetPort);
                     } else {
-                        System.err.println("Invalid -R spec: " + spec);
+                        kanaError("Invalid -R spec: " + spec);
                     }
                 }
             }
 
             if (!noShell) {
 
-                System.out.println("Requesting shell...");
+                kanaConnect("Requesting shell... Let's do this! ♪");
 
                 session.sendOpenSessionChannel(
                     envVariables.isEmpty() ? null : envVariables, 
