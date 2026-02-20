@@ -171,7 +171,7 @@ public class SshServer
         sshServer.setPort(config.getPort());
 
         // Use system PAM authentication
-        SystemPasswordAuthenticator authenticator = new SystemPasswordAuthenticator();
+        SystemPasswordAuthenticator authenticator = new SystemPasswordAuthenticator("login");
 
         FilePublicKeyAuthenticator filePublicKeyAuthenticator = new FilePublicKeyAuthenticator(authorizedKeysPath);
 
